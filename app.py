@@ -384,7 +384,7 @@ with st.sidebar:
 </div>
 <hr style="border-color:rgba(255,255,255,.1); margin:16px 0;">
 <div style="font-size:10px; color:rgba(255,255,255,.35); line-height:1.8;">
-🔧 使用モデル: gemini-2.0-flash<br>
+🔧 使用モデル: gemini-2.5-flash<br>
 🔊 TTS: gTTS（Google）<br>
 🎤 STT: Gemini Audio API
 </div>
@@ -410,10 +410,10 @@ audio_model = None
 if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
-        'gemini-2.0-flash',
+        'gemini-2.5-flash',
         generation_config={"response_mime_type": "application/json"}
     )
-    audio_model = genai.GenerativeModel('gemini-2.0-flash')
+    audio_model = genai.GenerativeModel('gemini-2.5-flash')
 
 
 # ============================================================
@@ -555,7 +555,7 @@ with tab1:
                 except Exception as e:
                     err = str(e)
                     if "NotFound" in err or "404" in err:
-                        st.error("❌ モデルエラー: gemini-2.0-flash が見つかりません。")
+                        st.error("❌ モデルエラー: gemini-2.5-flash が見つかりません。")
                     elif "PERMISSION_DENIED" in err or "403" in err:
                         st.error("❌ APIキーのエラー: キーが正しいか確認してください。")
                     else:
