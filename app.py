@@ -18,13 +18,13 @@ st.set_page_config(
 )
 
 # ============================================================
-# CSS --- マニュアルと同じデザイン言語
+# CSS
 # ============================================================
 st.markdown("""
 <style>
 /* ===== BASE ===== */
 .stApp { background: #f0f2f5; }
-.block-container { padding-top: 0 !important; max-width: 820px; }
+.block-container { padding-top: 2rem !important; max-width: 820px; } /* 余白を修正 */
 header[data-testid="stHeader"] { background: transparent; }
 
 /* ===== TABS ===== */
@@ -129,26 +129,6 @@ header[data-testid="stHeader"] { background: transparent; }
     margin-bottom: 10px;
     color: white;
     letter-spacing: .5px;
-}
-
-/* ===== PHRASE ROW ===== */
-.ep-phrase {
-    display: flex;
-    gap: 12px;
-    padding: 10px 0;
-    border-bottom: 1px solid #f1f5f9;
-    align-items: flex-start;
-    font-size: 13px;
-}
-.ep-phrase:last-child { border-bottom: none; }
-.ep-phrase-code {
-    border-radius: 6px;
-    padding: 3px 10px;
-    font-weight: 700;
-    font-size: 12px;
-    white-space: nowrap;
-    flex-shrink: 0;
-    font-family: monospace;
 }
 
 /* ===== VOCAB ===== */
@@ -315,15 +295,12 @@ header[data-testid="stHeader"] { background: transparent; }
 # ============================================================
 
 def ac(is_biz):
-    """Return accent colors for current mode"""
     if is_biz:
         return {"main": "#1d4ed8", "light": "#eff6ff", "border": "#bfdbfe", "badge": "#dbeafe", "text": "#1d4ed8"}
     else:
         return {"main": "#0d9488", "light": "#f0fdfa", "border": "#99f6e4", "badge": "#ccfbf1", "text": "#0f766e"}
 
-
 def generate_audio_html(text: str) -> str:
-    """Generate TTS audio with speed control buttons"""
     try:
         tts = gTTS(text=text, lang='en')
         fp = io.BytesIO()
@@ -354,9 +331,7 @@ def generate_audio_html(text: str) -> str:
     except Exception as e:
         return f'<div style="color:#ef4444;font-size:12px;">音声生成エラー: {e}</div>'
 
-
 def compare_words(target: str, spoken: str):
-    """Word-level comparison, returns (results, score)"""
     def normalize(text):
         return re.sub(r'[^\w\s]', '', text.lower()).split()
     tw = normalize(target)
@@ -364,7 +339,6 @@ def compare_words(target: str, spoken: str):
     results = [(w, w in sw) for w in tw]
     score = round(sum(1 for _, ok in results if ok) / max(len(results), 1) * 100)
     return results, score
-
 
 def placeholder_html(tab_name: str) -> str:
     return f"""
@@ -424,8 +398,8 @@ if "script_data" not in st.session_state:
     st.session_state.script_data = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "example_input" not in st.session_state:
-    st.session_state.example_input = ""
+if "main_input" not in st.session_state:
+    st.session_state.main_input = ""
 
 
 # ============================================================
@@ -435,7 +409,6 @@ model = None
 audio_model = None
 if api_key:
     genai.configure(api_key=api_key)
-    # ✅ FIX: gemini-1.5-flash → gemini-2.0-flash
     model = genai.GenerativeModel(
         'gemini-2.0-flash',
         generation_config={"response_mime_type": "application/json"}
@@ -455,10 +428,8 @@ mode = st.radio(
 is_biz = "展示会" in mode
 C = ac(is_biz)
 
-# Dynamic accent CSS
 st.markdown(f"""<style>:root {{ --accent: {C['main']}; }}</style>""", unsafe_allow_html=True)
 
-# Header banner
 st.markdown(f"""
 <div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc);color:white;padding:20px 24px 18px;border-radius:16px;margin-bottom:4px;box-shadow:0 4px 20px rgba(0,0,0,.15);">
   <div style="font-size:22px;font-weight:900;letter-spacing:-.5px;margin-bottom:4px;">🇺🇸 English Pitch & Talk</div>
@@ -475,7 +446,6 @@ sys_prompt = (
     "あなたは日常英会話のコーチです。旅行・カフェ・自己紹介など日常で使えるシンプルで温かみのある英文を作成してください。1文は必ず12単語以内。"
 )
 
-# Example inputs
 EXAMPLES = {
     True: [
         "このセンサーは従来品の半分の電力で動作します",
@@ -491,6 +461,7 @@ EXAMPLES = {
     ]
 }
 
+
 # ============================================================
 # TABS
 # ============================================================
@@ -504,7 +475,6 @@ data = st.session_state.script_data
 # TAB 1: INPUT
 # ============================================================
 with tab1:
-    # Example buttons
     st.markdown(f"""
 <div style="background:{C['light']};border:1px solid {C['border']};border-radius:14px;padding:14px;margin-bottom:14px;">
   <div style="font-size:11px;color:#64748b;font-weight:700;margin-bottom:10px;">💡 クイックスタート例文（タップで入力）</div>
@@ -513,17 +483,17 @@ with tab1:
     ex_cols = st.columns(2)
     for i, ex in enumerate(EXAMPLES[is_biz]):
         with ex_cols[i % 2]:
+            # === FIX: session_state のウィジェット key を直接更新する ===
             if st.button(ex[:18] + "…", key=f"ex_{i}", use_container_width=True):
-                st.session_state.example_input = ex
+                st.session_state.main_input = ex
 
     st.markdown("</div>", unsafe_allow_html=True)
 
     user_input = st.text_area(
         "英語にしたい日本語を入力",
-        value=st.session_state.example_input,
+        key="main_input", # === FIX: valueではなくkeyを直接指定 ===
         placeholder="例: 弊社のセンサーは従来品の半分の電力で動作します。",
-        height=110,
-        key="main_input"
+        height=110
     )
 
     st.markdown('<div style="font-size:10px;color:#94a3b8;margin-top:2px;margin-bottom:12px;">💡 短い文（1〜2文）ほど高品質なコンテンツが生成されます</div>', unsafe_allow_html=True)
@@ -573,7 +543,6 @@ with tab1:
                 try:
                     response = model.generate_content([sys_prompt, prompt])
                     raw = response.text
-                    # Robust JSON extraction
                     json_match = re.search(r'\{[\s\S]*\}', raw)
                     if json_match:
                         st.session_state.script_data = json.loads(json_match.group())
@@ -586,9 +555,9 @@ with tab1:
                 except Exception as e:
                     err = str(e)
                     if "NotFound" in err or "404" in err:
-                        st.error("❌ モデルエラー: gemini-2.0-flash が見つかりません。APIキーとネットワーク接続を確認してください。")
+                        st.error("❌ モデルエラー: gemini-2.0-flash が見つかりません。")
                     elif "PERMISSION_DENIED" in err or "403" in err:
-                        st.error("❌ APIキーのエラー: キーが正しいか確認してください。Google AI Studioで再発行をお試しください。")
+                        st.error("❌ APIキーのエラー: キーが正しいか確認してください。")
                     else:
                         st.error(f"❌ エラーが発生しました: {err}")
 
@@ -600,7 +569,6 @@ with tab2:
     if not data:
         st.markdown(placeholder_html("📖 スクリプト"), unsafe_allow_html=True)
     else:
-        # Main script with chunks
         st.markdown(f"""
 <div class="ep-script" style="background:{C['light']};border:2px solid {C['border']};border-left-color:{C['main']};">
   <div class="ep-section-label" style="background:{C['main']};">📖 英文スクリプト（チャンク読み）</div>
@@ -609,7 +577,6 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # Grammar notes
         st.markdown(f"""
 <div class="ep-card">
   <div class="ep-section-label" style="background:{C['main']};">📚 文法・フレーズ解説</div>
@@ -617,7 +584,6 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # Vocabulary
         vocab = data.get('vocab', {})
         if vocab:
             vocab_html = "".join([
@@ -631,9 +597,10 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # Q&A pairs (business mode only)
-        if is_biz and data.get('qa_pairs'):
+        # === FIX: is_biz の条件を外し、日常会話モードでもQ&Aを表示 ===
+        if data.get('qa_pairs'):
             qa_html = ""
+            qa_label = "🙋 想定Q&A（展示会バイヤーからの質問）" if is_biz else "🙋 想定Q&A（会話のキャッチボール）"
             for qa in data['qa_pairs']:
                 qa_html += f"""
 <div class="ep-qa">
@@ -647,7 +614,7 @@ with tab2:
 </div>"""
             st.markdown(f"""
 <div class="ep-card">
-  <div class="ep-section-label" style="background:{C['main']};">🙋 想定Q&A（展示会バイヤーからの質問）</div>
+  <div class="ep-section-label" style="background:{C['main']};">{qa_label}</div>
   {qa_html}
 </div>
 """, unsafe_allow_html=True)
@@ -713,7 +680,6 @@ with tab4:
 </div>
 """, unsafe_allow_html=True)
 
-        # Reference audio
         st.markdown(f'<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:8px;">🔊 手本の発音を聴く</div>', unsafe_allow_html=True)
         ref_html = generate_audio_html(data.get('english', ''))
         st.components.v1.html(ref_html, height=130)
@@ -721,7 +687,6 @@ with tab4:
         st.markdown("<hr style='margin:16px 0;'>", unsafe_allow_html=True)
         st.markdown(f'<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:8px;">🎤 マイクで音読する（録音後に自動採点）</div>', unsafe_allow_html=True)
 
-        # iPhone-compatible mic input
         audio_value = st.audio_input("マイクを押して録音してください")
 
         if audio_value is not None:
@@ -752,7 +717,6 @@ with tab4:
 
                         score_color = "#22c55e" if score >= 80 else "#eab308" if score >= 60 else "#ef4444"
 
-                        # Score display
                         st.markdown(f"""
 <div class="ep-card" style="margin-top:16px;">
   <div class="ep-score-box">
@@ -799,7 +763,6 @@ with tab5:
 </div>
 """, unsafe_allow_html=True)
 
-        # Countdown
         if st.button("⏱ 3秒カウントダウンスタート", use_container_width=True, key="timer_start"):
             ph = st.empty()
             for i in range(3, 0, -1):
@@ -847,7 +810,6 @@ with tab5:
                 audio_html_play = generate_audio_html(eng)
                 st.components.v1.html(audio_html_play, height=130)
 
-        # Paraphrase rescue
         if data.get('paraphrases'):
             with st.expander("🆘 言い換えレスキュー（単語が出ない時）"):
                 para_html = ""
@@ -869,7 +831,6 @@ with tab6:
     if not data:
         st.markdown(placeholder_html("🎭 ロールプレイ"), unsafe_allow_html=True)
     else:
-        # Init chat
         if not st.session_state.chat_history:
             opener = (
                 f"Hello! I'm visiting your booth today. Tell me about your product."
@@ -878,7 +839,6 @@ with tab6:
             )
             st.session_state.chat_history = [{"role": "assistant", "content": opener}]
 
-        # Chat bubbles
         chat_html = '<div class="ep-chat-wrap">'
         for msg in st.session_state.chat_history:
             if msg["role"] == "user":
@@ -889,7 +849,6 @@ with tab6:
         chat_html += "</div>"
         st.markdown(chat_html, unsafe_allow_html=True)
 
-        # Paraphrase rescue
         if data.get('paraphrases'):
             with st.expander("🆘 言い換えレスキュー"):
                 for p in data['paraphrases']:
@@ -900,7 +859,6 @@ with tab6:
   <span class="ep-para-easy">{p.get('simple','')}</span>
 </div>""", unsafe_allow_html=True)
 
-        # Input
         user_msg = st.chat_input("英語で返事を入力してください...")
         if user_msg:
             st.session_state.chat_history.append({"role": "user", "content": user_msg})
@@ -929,28 +887,46 @@ with tab6:
 
 
 # ============================================================
-# FILLER CARDS (Business mode + data exists)
+# FILLER CARDS (両方のモードに対応)
 # ============================================================
-if is_biz and data:
-    FILLERS = [
-        ("That's a great question.", "いい質問ですね"),
-        ("Let me explain.", "説明します"),
-        ("In other words...", "つまり..."),
-        ("For example...", "例えば..."),
-        ("The key point is...", "重要なのは..."),
-        ("Could you repeat that?", "繰り返してください"),
-        ("One moment, please.", "少々お待ちください"),
-        ("I understand.", "承知しました"),
-        ("Good point!", "おっしゃる通り"),
-        ("Let me check.", "確認させてください"),
-    ]
+# === FIX: is_biz の条件を外し、モードに応じて内容を出し分ける ===
+if data:
+    if is_biz:
+        FILLERS = [
+            ("That's a great question.", "いい質問ですね"),
+            ("Let me explain.", "説明します"),
+            ("In other words...", "つまり..."),
+            ("For example...", "例えば..."),
+            ("The key point is...", "重要なのは..."),
+            ("Could you repeat that?", "繰り返してください"),
+            ("One moment, please.", "少々お待ちください"),
+            ("I understand.", "承知しました"),
+            ("Good point!", "おっしゃる通り"),
+            ("Let me check.", "確認させてください"),
+        ]
+        filler_title = "💬 フィラーカード（時間かせぎフレーズ） ― 覚えてすぐに使おう！"
+    else:
+        FILLERS = [
+            ("Well...", "ええと..."),
+            ("Let me see.", "そうですね..."),
+            ("You know,", "あのね、"),
+            ("Actually,", "実は、"),
+            ("By the way,", "ところで、"),
+            ("I mean,", "つまり、"),
+            ("That's true.", "その通りですね"),
+            ("I see.", "なるほど"),
+            ("Sounds good!", "いいですね！"),
+            ("Right.", "そうですね"),
+        ]
+        filler_title = "💬 相づち・つなぎ言葉カード ― 会話をスムーズに！"
+
     filler_cards = "".join([
         f'<div class="ep-filler-card"><div class="ep-filler-en">{en}</div><div class="ep-filler-jp">{jp}</div></div>'
         for en, jp in FILLERS
     ])
     st.markdown(f"""
 <div class="ep-filler-wrap">
-  <div style="font-size:11px;font-weight:700;color:#94a3b8;">💬 フィラーカード（時間かせぎフレーズ） ― 覚えてすぐに使おう！</div>
+  <div style="font-size:11px;font-weight:700;color:#94a3b8;">{filler_title}</div>
   <div class="ep-filler-grid">{filler_cards}</div>
 </div>
 """, unsafe_allow_html=True)
