@@ -30,9 +30,9 @@ if not api_key:
 
 if api_key:
     genai.configure(api_key=api_key)
-    # JSON構造で出力させるためにGemini 1.5 Pro/Flashを使用
-    model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
-    audio_model = genai.GenerativeModel('gemini-1.5-flash')
+    # JSON構造で出力させるためにGemini 2.0 Pro/Flashを使用
+model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
+audio_model = genai.GenerativeModel('gemini-2.0-flash')
 
 # ==========================================
 # 3. 状態管理（Session State）
