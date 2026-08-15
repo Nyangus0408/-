@@ -4,7 +4,6 @@ import json
 import base64
 import io
 import time
-import re
 import os
 from gtts import gTTS
 
@@ -163,7 +162,7 @@ def ph(tab_name):
 
 
 # ============================================================
-# API KEY（Secrets → 環境変数 → サイドバー入力 の順）
+# API KEY
 # ============================================================
 api_key = ""
 try:
@@ -206,7 +205,7 @@ with st.sidebar:
 </div>
 <hr style="border-color:rgba(255,255,255,.1);margin:16px 0;">
 <div style="font-size:10px;color:rgba(255,255,255,.35);line-height:1.8;">
-🔧 使用モデル: gemini-2.0-flash<br>🔊 TTS: gTTS（Google）<br>🎤 STT: Gemini Audio API
+🔧 使用モデル: gemini-3.5-flash<br>🔊 TTS: gTTS（Google）<br>🎤 STT: Gemini Audio API
 </div>
 """, unsafe_allow_html=True)
 
@@ -218,14 +217,21 @@ for k, v in [("script_data", None), ("chat_history", []), ("sel_example", "")]:
         st.session_state[k] = v
 
 # ============================================================
-# MODEL INIT  ★ gemini-2.0-flash に修正済み ★
+# MODEL INIT ★ gemini-3.5-flash へのアップデートおよびJSONモードの有効化 ★
 # ============================================================
 model = None
 audio_model = None
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.0-flash')        # ← 修正
-    audio_model = genai.GenerativeModel('gemini-2.0-flash')  # ← 修正
+    # response_mime_type を指定することで、確実にJSONのみを出力させます
+    model = genai.GenerativeModel(
+        'gemini-3.5-flash',
+        generation_config={"response_mime_type": "application/json"}
+    )
+    audio_model = genai.GenerativeModel(
+        'gemini-3.5-flash',
+        generation_config={"response_mime_type": "application/json"}
+    )
 
 # ============================================================
 # HEADER & MODE
@@ -325,7 +331,7 @@ with tab1:
         else:
             with st.spinner("AIが学習コンテンツを作成中... ✨"):
                 prompt = f"""
-以下のルールに従い、純粋なJSONのみで出力してください（コードブロック不要）。
+以下のJSONスキーマに従って出力してください。
 
 [入力文]: {user_input}
 [場面]: {"展示会・ビジネス（製品説明・技術紹介・商談）" if is_biz else "日常会話（カフェ・買い物・道案内・自己紹介）"}
@@ -353,17 +359,15 @@ with tab1:
 """
                 try:
                     response = model.generate_content([sys_prompt, prompt])
-                    raw = response.text
-                    m = re.search(r'\{[\s\S]*\}', raw)
-                    if m:
-                        st.session_state.script_data = json.loads(m.group())
-                        st.session_state.chat_history = []
-                        st.session_state.sel_example = ""
-                        data = st.session_state.script_data
-                        st.success("✅ 生成完了！上の「📖 スクリプト」タブに進んでください。")
-                        st.balloons()
-                    else:
-                        st.error("JSONの解析に失敗しました。もう一度お試しください。")
+                    # JSONモードを有効化したため、正規表現を使わず直接パース可能になります
+                    st.session_state.script_data = json.loads(response.text)
+                    st.session_state.chat_history = []
+                    st.session_state.sel_example = ""
+                    data = st.session_state.script_data
+                    st.success("✅ 生成完了！上の「📖 スクリプト」タブに進んでください。")
+                    st.balloons()
+                except json.JSONDecodeError:
+                    st.error("JSONの解析に失敗しました。もう一度お試しください。")
                 except Exception as e:
                     err = str(e)
                     if "404" in err or "not found" in err.lower():
@@ -375,13 +379,12 @@ with tab1:
 
 
 # ============================================================
-# TAB 2: SCRIPT ― 仕様書 STEP1 完全準拠
+# TAB 2: SCRIPT
 # ============================================================
 with tab2:
     if not data:
         st.markdown(ph("📖 スクリプト"), unsafe_allow_html=True)
     else:
-        # メインスクリプト（チャンク読み）
         st.markdown(f"""
 <div class="ep-script" style="background:{C['light']};border:2px solid {C['border']};border-left-color:{C['main']};">
   <div class="ep-section-label" style="background:{C['main']};">📖 英文スクリプト（チャンク読み）</div>
@@ -390,7 +393,6 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # 文法解説
         st.markdown(f"""
 <div class="ep-card">
   <div class="ep-section-label" style="background:{C['main']};">📚 文法・フレーズ解説</div>
@@ -398,7 +400,6 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # 重要語彙
         if data.get('vocab'):
             v_html = "".join([
                 f'<span class="ep-vocab" style="background:{C["light"]};color:{C["main"]};"><strong>{k}</strong>: {v}</span>'
@@ -411,7 +412,6 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # 想定Q&A（展示会モードのみ・仕様書 STEP1 記載の機能）
         if is_biz and data.get('qa_pairs'):
             qa_html = ""
             for qa in data['qa_pairs']:
@@ -438,7 +438,7 @@ with tab2:
 
 
 # ============================================================
-# TAB 3: AUDIO ― 仕様書 STEP2 完全準拠
+# TAB 3: AUDIO
 # ============================================================
 with tab3:
     if not data:
@@ -456,7 +456,6 @@ with tab3:
 
         st.components.v1.html(generate_audio_html(data.get('english', '')), height=130)
 
-        # 安河内式 音読3ステップ（仕様書記載）
         st.markdown(f"""
 <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:16px;padding:18px;margin-top:16px;">
   <div style="font-size:12px;font-weight:800;color:#92400e;margin-bottom:12px;">💡 安河内式 音読 3ステップ</div>
@@ -482,7 +481,7 @@ with tab3:
 
 
 # ============================================================
-# TAB 4: PRONUNCIATION ― 仕様書 STEP3 完全準拠
+# TAB 4: PRONUNCIATION
 # ============================================================
 with tab4:
     if not data:
@@ -508,7 +507,7 @@ with tab4:
                 analysis_prompt = f"""
 この音声を英語として文字起こしし、元の文「{data.get('english', '')}」と比較して採点してください。
 
-以下のJSONのみで回答（コードブロック不要）:
+以下のJSONスキーマに従って出力してください:
 {{
   "score": 85,
   "transcript": "認識されたテキスト",
@@ -521,16 +520,15 @@ with tab4:
                     result = audio_model.generate_content(
                         [analysis_prompt, {"mime_type": "audio/wav", "data": audio_value.getvalue()}]
                     )
-                    m = re.search(r'\{[\s\S]*\}', result.text)
-                    if m:
-                        rd = json.loads(m.group())
-                        score = rd.get('score', 0)
-                        score_color = "#22c55e" if score >= 80 else "#eab308" if score >= 60 else "#ef4444"
+                    # こちらも正規表現を撤廃し、直接JSONとして読み込みます
+                    rd = json.loads(result.text)
+                    score = rd.get('score', 0)
+                    score_color = "#22c55e" if score >= 80 else "#eab308" if score >= 60 else "#ef4444"
 
-                        good_chips = "".join([f'<span class="ep-chip-ok">{w}</span>' for w in rd.get('good_words', [])])
-                        bad_chips  = "".join([f'<span class="ep-chip-ng">{w}</span>'  for w in rd.get('bad_words',  [])])
+                    good_chips = "".join([f'<span class="ep-chip-ok">{w}</span>' for w in rd.get('good_words', [])])
+                    bad_chips  = "".join([f'<span class="ep-chip-ng">{w}</span>'  for w in rd.get('bad_words',  [])])
 
-                        st.markdown(f"""
+                    st.markdown(f"""
 <div class="ep-card" style="margin-top:16px;">
   <div class="ep-score-box">
     <span style="font-size:13px;font-weight:800;color:#334155;">発音マッチ度</span>
@@ -545,18 +543,19 @@ with tab4:
 </div>
 """, unsafe_allow_html=True)
 
-                        if score >= 80:
-                            st.markdown('<div class="ep-alert-green">🎉 素晴らしい！次のステップへ進みましょう！</div>', unsafe_allow_html=True)
-                        elif score < 60:
-                            st.markdown('<div class="ep-alert-orange">💡 0.8xでゆっくり練習し、スラッシュ単位で区切って確認しましょう</div>', unsafe_allow_html=True)
-                    else:
-                        st.info(result.text)
+                    if score >= 80:
+                        st.markdown('<div class="ep-alert-green">🎉 素晴らしい！次のステップへ進みましょう！</div>', unsafe_allow_html=True)
+                    elif score < 60:
+                        st.markdown('<div class="ep-alert-orange">💡 0.8xでゆっくり練習し、スラッシュ単位で区切って確認しましょう</div>', unsafe_allow_html=True)
+                
+                except json.JSONDecodeError:
+                    st.error("JSON解析エラー: 解析できないデータが返却されました。")
                 except Exception as e:
                     st.error(f"分析エラー: {str(e)}")
 
 
 # ============================================================
-# TAB 5: PRACTICE ― 仕様書 STEP4 完全準拠（3秒タイマー＋言い換えレスキュー）
+# TAB 5: PRACTICE
 # ============================================================
 with tab5:
     if not data:
@@ -575,7 +574,6 @@ with tab5:
 </div>
 """, unsafe_allow_html=True)
 
-        # 3秒カウントダウンタイマー（仕様書 STEP4 記載の機能）
         if st.button("⏱ 3秒カウントダウンスタート", use_container_width=True, key="timer_btn"):
             ph_timer = st.empty()
             for i in range(3, 0, -1):
@@ -621,7 +619,6 @@ with tab5:
         if play_btn:
             st.components.v1.html(generate_audio_html(data.get('english', '')), height=130)
 
-        # 言い換えレスキュー（仕様書 アイデア③ 記載の機能）
         if data.get('paraphrases'):
             with st.expander("🆘 言い換えレスキュー（単語が出ない時に使う）"):
                 para_html = ""
@@ -637,7 +634,7 @@ with tab5:
 
 
 # ============================================================
-# TAB 6: ROLEPLAY ― 仕様書 STEP5 完全準拠
+# TAB 6: ROLEPLAY
 # ============================================================
 with tab6:
     if not data:
@@ -651,7 +648,6 @@ with tab6:
             )
             st.session_state.chat_history = [{"role": "assistant", "content": opener}]
 
-        # チャット表示
         chat_html = '<div class="ep-chat-wrap">'
         for msg in st.session_state.chat_history:
             if msg["role"] == "user":
@@ -662,7 +658,6 @@ with tab6:
         chat_html += "</div>"
         st.markdown(chat_html, unsafe_allow_html=True)
 
-        # 言い換えレスキュー（仕様書 アイデア③ 記載）
         if data.get('paraphrases'):
             with st.expander("🆘 言い換えレスキュー"):
                 for p in data['paraphrases']:
@@ -685,7 +680,10 @@ with tab6:
 自然で短い英語（1〜2文）で返答してください。
 """
                 try:
-                    res = audio_model.generate_content(chat_prompt)
+                    # ロールプレイは通常のテキストモデルを使用（audio_modelでも代用可）
+                    # JSONモードを有効化しているモデルインスタンスを避けるため、chat用に別途設定なしで生成
+                    chat_model = genai.GenerativeModel('gemini-3.5-flash')
+                    res = chat_model.generate_content(chat_prompt)
                     st.session_state.chat_history.append({"role": "assistant", "content": res.text.strip()})
                     st.rerun()
                 except Exception as e:
@@ -697,7 +695,7 @@ with tab6:
 
 
 # ============================================================
-# フィラーカード ― 仕様書 アイデア④ 記載の機能（展示会モードのみ）
+# フィラーカード
 # ============================================================
 if is_biz and data:
     filler_cards = "".join([
@@ -707,7 +705,7 @@ if is_biz and data:
     st.markdown(f"""
 <div class="ep-filler-wrap">
   <div style="font-size:11px;font-weight:700;color:#94a3b8;">
-    💬 フィラーカード（時間かせぎフレーズ） ― 仕様書 アイデア④
+    💬 フィラーカード（時間かせぎフレーズ）
   </div>
   <div class="ep-filler-grid">{filler_cards}</div>
 </div>
