@@ -148,60 +148,22 @@ header[data-testid="stHeader"] { background: transparent; }
     margin-bottom: 10px;
 }
 
-/* ===== TIP ===== */
-.ep-tip {
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    border-radius: 14px;
-    padding: 16px 18px;
-    margin: 14px 0;
-    font-size: 13px;
-    line-height: 1.7;
-}
-
 /* ===== SCORE ===== */
 .ep-score-box { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .ep-score-num { font-size: 52px; font-weight: 900; line-height: 1; }
 .ep-score-bar-wrap { background: #f1f5f9; border-radius: 8px; height: 12px; overflow: hidden; margin-bottom: 16px; }
 .ep-score-bar { height: 100%; border-radius: 8px; }
 
-/* ===== WORD CHIPS ===== */
-.ep-chip { border-radius: 6px; padding: 3px 9px; font-weight: 600; display: inline-block; margin: 2px; font-size: 13px; }
-.ep-chip-ok { background: #dcfce7; color: #16a34a; }
-.ep-chip-ng { background: #fee2e2; color: #dc2626; text-decoration: line-through; }
-
 /* ===== CHAT ===== */
 .ep-chat-wrap { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; min-height: 220px; max-height: 380px; overflow-y: auto; margin-bottom: 12px; }
 .ep-bubble-user { border-radius: 18px 18px 4px 18px; padding: 10px 14px; margin: 8px 0 8px 15%; font-size: 13px; line-height: 1.5; color: white; }
 .ep-bubble-ai { background: white; border: 1px solid #e2e8f0; border-radius: 18px 18px 18px 4px; padding: 10px 14px; margin: 8px 15% 8px 0; font-size: 13px; line-height: 1.5; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
-.ep-bubble-label { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
-
-/* ===== PARAPHRASE ===== */
-.ep-para { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: #fff7ed; border-radius: 8px; margin-bottom: 6px; font-size: 13px; flex-wrap: wrap; }
-.ep-para-hard { text-decoration: line-through; color: #f87171; }
-.ep-para-easy { font-weight: 800; color: #16a34a; }
-.ep-para-note { color: #94a3b8; font-size: 11px; }
-
-/* ===== FILLER ===== */
-.ep-filler-wrap { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; margin-top: 24px; }
-.ep-filler-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.ep-filler-card { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 8px 14px; cursor: default; }
-.ep-filler-en { font-weight: 700; color: #1d4ed8; font-size: 12px; }
-.ep-filler-jp { color: #94a3b8; font-size: 11px; margin-top: 2px; }
 
 /* ===== PLACEHOLDER ===== */
 .ep-placeholder { text-align: center; padding: 56px 20px; color: #94a3b8; }
 .ep-placeholder-icon { font-size: 52px; margin-bottom: 14px; }
 .ep-placeholder-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #64748b; }
 .ep-placeholder-sub { font-size: 12px; }
-
-/* ===== ALERT BOXES ===== */
-.ep-alert { border-radius: 12px; padding: 12px 16px; text-align: center; font-weight: 700; font-size: 13px; margin-top: 14px; }
-.ep-alert-green { background: #f0fdf4; border: 1px solid #bbf7d0; color: #16a34a; }
-.ep-alert-orange { background: #fff7ed; border: 1px solid #fed7aa; color: #ea580c; font-size: 12px; font-weight: 400; }
-
-/* ===== EXAMPLE BUTTONS ===== */
-.stButton > button[data-testid*="ex_"] { background: #f8fafc !important; color: #475569 !important; border: 1px solid #e2e8f0 !important; font-size: 11px !important; padding: 6px 10px !important; font-weight: 600 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -227,9 +189,9 @@ def generate_audio_html(text: str) -> str:
   <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
 </audio>
 <div style="display:flex; gap:8px;">
-  <button onclick="document.getElementById('epAudio').playbackRate=0.8;document.getElementById('epAudio').play();" style="flex:1;padding:10px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;transition:all .15s;">🐢 0.8x</button>
-  <button onclick="document.getElementById('epAudio').playbackRate=1.0;document.getElementById('epAudio').play();" style="flex:1;padding:10px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;transition:all .15s;">▶️ 1.0x</button>
-  <button onclick="document.getElementById('epAudio').playbackRate=1.2;document.getElementById('epAudio').play();" style="flex:1;padding:10px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;transition:all .15s;">⚡ 1.2x</button>
+  <button onclick="document.getElementById('epAudio').playbackRate=0.8;document.getElementById('epAudio').play();" style="flex:1;padding:10px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;">🐢 0.8x</button>
+  <button onclick="document.getElementById('epAudio').playbackRate=1.0;document.getElementById('epAudio').play();" style="flex:1;padding:10px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;">▶️ 1.0x</button>
+  <button onclick="document.getElementById('epAudio').playbackRate=1.2;document.getElementById('epAudio').play();" style="flex:1;padding:10px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;">⚡ 1.2x</button>
 </div>"""
     except Exception as e:
         return f'<div style="color:#ef4444;font-size:12px;">音声生成エラー: {e}</div>'
@@ -246,7 +208,6 @@ def placeholder_html(tab_name: str) -> str:
 # ============================================================
 # API KEY & SECRETS SETUP
 # ============================================================
-# ★修正: Streamlit SecretsからAPIキーを自動取得するロジック
 api_key = ""
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -254,6 +215,7 @@ elif "API_KEY" in st.secrets:
     api_key = st.secrets["API_KEY"]
 elif "GEMINI_API_KEY" in os.environ:
     api_key = os.environ["GEMINI_API_KEY"]
+
 
 # ============================================================
 # SIDEBAR
@@ -267,7 +229,6 @@ with st.sidebar:
 <hr style="border-color:rgba(255,255,255,.1); margin:8px 0 16px;">
 """, unsafe_allow_html=True)
 
-    # APIキーが裏側で取得できていない場合のみ、入力欄を表示する
     if not api_key:
         api_key_input = st.text_input("🔑 Gemini API Key", type="password", placeholder="AIza または AQ.Ab...")
         if api_key_input:
@@ -309,8 +270,8 @@ model = None
 audio_model = None
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
-    audio_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
+    audio_model = genai.GenerativeModel('gemini-1.5-flash')
 
 
 # ============================================================
