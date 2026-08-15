@@ -311,7 +311,7 @@ if api_key:
     genai.configure(api_key=api_key)
     # ★修正: 安定板の gemini-1.5-flash に固定
    model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
-audio_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+   audio_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 
 # ============================================================
