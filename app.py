@@ -1,6 +1,6 @@
 # ============================================================
 # English / Deutsch Pitch & Talk ── 多言語対応版
-# 変更: ①バッジ・例文削除 ②③ドイツ語切替(バッジ位置) ④同等機能
+# 修正: ①モデル名を gemini-1.5-flash に変更 ②iPhone音声(MIMEタイプ)の動的取得対応 ③上部ラジオボタン削除
 # ============================================================
 import streamlit as st
 import google.generativeai as genai
@@ -275,11 +275,12 @@ def extract_url(url: str) -> str:
         return re.sub(r'\n{3,}', '\n\n', txt)[:3000]
     except Exception as e: return f"取得失敗: {e}"
 
-def transcribe(audio_bytes, mdl, lang='en') -> str:
+# 修正部分：音声ファイルオブジェクトを受け取り、動的にMIMEタイプを設定する
+def transcribe(audio_file, mdl, lang='en') -> str:
     inst = "この音声を日本語として文字起こしし、テキストのみ出力してください。" if lang == 'en' else \
            "Schreibe dieses Audio als deutschen Text auf und gib nur den Text aus."
     try:
-        res = mdl.generate_content([inst, {"mime_type":"audio/wav","data":audio_bytes}])
+        res = mdl.generate_content([inst, {"mime_type": audio_file.type, "data": audio_file.getvalue()}])
         return res.text.strip()
     except: return ""
 
@@ -381,7 +382,7 @@ with st.sidebar:
 </div>
 <hr style="border-color:rgba(255,255,255,.1);margin:14px 0;">
 <div style="font-size:10px;color:rgba(255,255,255,.3);line-height:1.8;">
-🔧 モデル: gemini-2.0-flash<br>🔊 TTS: gTTS ({lang})<br>🎤 STT: Gemini Audio
+🔧 モデル: gemini-1.5-flash<br>🔊 TTS: gTTS ({lang})<br>🎤 STT: Gemini Audio
 </div>
 """, unsafe_allow_html=True)
 
@@ -389,12 +390,13 @@ with st.sidebar:
 mdl = None
 if api_key:
     genai.configure(api_key=api_key)
-    mdl = genai.GenerativeModel('gemini-2.0-flash')
+    # 修正部分：安定板のモデルに変更
+    mdl = genai.GenerativeModel('gemini-1.5-flash')
 
 # ── HEADER & モード選択 ──────────────────────────────────────
-mode = st.radio("モード",["🏢 展示会・ビジネス","☕ 日常会話・基礎"],
-                horizontal=True, label_visibility="collapsed")
-is_biz = "展示会" in mode
+# 修正部分：ラジオボタンを削除し、ビジネスモードをデフォルトとして固定（日常会話モードにしたい場合はFalseに変更してください）
+is_biz = True
+
 C = ac(is_biz, lang)
 st.markdown(f"<style>:root{{--acc:{C['main']};}}</style>", unsafe_allow_html=True)
 
@@ -481,7 +483,8 @@ with tab1:
         voice_audio = st.audio_input("🎤 録音ボタンを押して話してください", key="voice_input_ja")
         if voice_audio and mdl:
             with st.spinner("文字起こし中..."):
-                txt = transcribe(voice_audio.getvalue(), mdl, lang)
+                # 修正部分：voice_audio（ファイルオブジェクト自体）を渡す
+                txt = transcribe(voice_audio, mdl, lang)
                 if txt:
                     st.session_state.voice_text = txt
                     st.success(f"✅ 認識: {txt}")
@@ -681,7 +684,8 @@ with tab4:
 JSONのみ出力:
 {{"score":85,"transcript":"認識テキスト","good_words":["正解単語"],"bad_words":["要練習単語"],"feedback":"フィードバック（日本語1文）"}}"""
                 try:
-                    res = mdl.generate_content([ap, {"mime_type":"audio/wav","data":audio_val.getvalue()}])
+                    # 修正部分：audio_val の MIMEタイプを動的に指定
+                    res = mdl.generate_content([ap, {"mime_type": audio_val.type, "data": audio_val.getvalue()}])
                     m = re.search(r'\{[\s\S]*\}', res.text)
                     if m:
                         rd = json.loads(m.group()); sc = rd.get('score',0)
