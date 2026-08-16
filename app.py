@@ -1,5 +1,5 @@
 # ============================================================
-# English / Deutsch Pitch & Talk ── 修正版
+# English / Deutsch Pitch & Talk
 # ============================================================
 import streamlit as st
 import google.generativeai as genai
@@ -297,7 +297,6 @@ def build_context_prompt(context, src_label, is_biz, lang, level_key):
 def do_generate(prompt, sys_p, mdl_json):
     res = mdl_json.generate_content([sys_p, prompt])
     text = res.text.strip()
-    # JSONモデルの場合でもマークダウン記法が入ることがあるため除去
     text = re.sub(r'^```json\s*', '', text)
     text = re.sub(r'^```\s*', '', text)
     text = re.sub(r'\s*```$', '', text)
@@ -314,9 +313,8 @@ mdl_text = None
 mdl_json = None
 if api_key:
     genai.configure(api_key=api_key)
-    # ★ 修正ポイント1: 'gemini-1.5-flash-latest' に変更し、404エラーを回避
-    mdl_text = genai.GenerativeModel('gemini-1.5-flash-latest')
-    mdl_json = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
+    mdl_text = genai.GenerativeModel('gemini-1.5-flash')
+    mdl_json = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
 
 # ── SESSION STATE ────────────────────────────────────────────
 defaults = {"script_data":None,"chat_history":[],"saved_list":[],
@@ -401,7 +399,6 @@ with tab1:
     level_key = st.selectbox("📊 学習レベル", list(LEVELS.keys()), index=1)
     scenario = ""
 
-    # ラジオボタンでの入力方法選択
     im = st.radio("入力方法",["✏️ テキスト","🎤 音声入力","📄 PDF","🔗 URL"],
                   horizontal=True, key="input_method_radio")
 
@@ -430,11 +427,10 @@ with tab1:
                         if txt:
                             st.session_state.voice_text = txt
                             st.session_state.last_audio_size = current_audio_size
-                            st.success("✅ 音声を認識しました！")
+                            st.success("✅ 音声を認識しました")
                         else:
-                            st.error("❌ 音声の認識に失敗しました。")
+                            st.error("❌ 音声の認識に失敗しました")
         
-        # ★ 修正ポイント2: iPhoneの画面更新対策。テキストエリアの値を常に session_state に同期させ、user_input にも確実に格納する。
         user_input = st.text_area("認識されたテキスト（編集可）", value=st.session_state.get("voice_text", ""), height=80)
         st.session_state.voice_text = user_input
 
@@ -455,9 +451,9 @@ with tab1:
             user_input = f"[URL内容]: {st.session_state['url_text_cache']}"
 
     if st.button("✨ スクリプト＆学習コンテンツを生成する", type="primary", use_container_width=True):
-        if not api_key: st.error("❌ APIキーが設定されていません。")
-        elif not user_input or not user_input.strip(): st.warning("内容を入力してください。")
-        elif not mdl_json: st.error("❌ モデルの初期化に失敗しました。")
+        if not api_key: st.error("❌ APIキーが設定されていません")
+        elif not user_input or not user_input.strip(): st.warning("内容を入力してください")
+        elif not mdl_json: st.error("❌ モデルの初期化に失敗しました")
         else:
             with st.spinner("AIがスクリプトを作成中... ✨"):
                 try:
@@ -466,19 +462,16 @@ with tab1:
                     else:
                         prompt = build_prompt(user_input, is_biz, level_key, lang, scenario)
                     
-                    # JSON専用モデルで生成
                     result = do_generate(prompt, sys_p, mdl_json)
                     result.update({"_source_ja": user_input[:100], "_level": level_key,
                                    "_mode": "business" if is_biz else "daily", "_lang": lang})
                     
                     st.session_state.script_data = result
                     st.session_state.chat_history = []
-                    # 生成が終わったら次の入力のために音声テキストをクリアする
                     st.session_state.voice_text = ""
                     st.session_state.last_audio_size = 0
                     
-                    st.success("✅ 生成完了！「📖 スクリプト」タブに進んでください。")
-                    st.balloons()
+                    st.success("✅ 生成完了。「📖 スクリプト」タブへ進むこと")
                 except Exception as e:
                     st.error(f"❌ 生成エラー: {e}")
 
@@ -498,7 +491,7 @@ with tab2:
 </div>""", unsafe_allow_html=True)
         if st.button("📚 マイ学習帳に保存", use_container_width=True):
             st.session_state.saved_list.append({"id": int(time.time()), "title": data.get("english","")[:40]+"…", "english": data.get("english",""), "english_jp": data.get("english_jp",""), "chunked": data.get("chunked",""), "level": data.get("_level",""), "mode": data.get("_mode",""), "lang": data.get("_lang","en"), "source_ja": data.get("_source_ja",""), "saved_at": datetime.now().strftime("%m/%d %H:%M"), "data": data})
-            st.success("✅ 保存しました！")
+            st.success("✅ 保存完了")
         
         st.markdown(f'<div class="ep-card"><div class="ep-label" style="background:{DC["main"]};">📚 文法・フレーズ解説</div><div style="font-size:13px;">{data.get("grammar","")}</div></div>', unsafe_allow_html=True)
         
@@ -525,7 +518,7 @@ with tab4:
         dl = data.get('_lang', 'en'); DC = ac(is_biz, dl)
         audio_val = st.audio_input("マイクを押して録音")
         if audio_val and mdl_json:
-            with st.spinner("AIが発音を分析中... 🎯"):
+            with st.spinner("AIが発音を分析中..."):
                 ap = f"""この音声を{'Deutschen' if dl=='de' else '英語'}として文字起こしし、「{data.get('english','')}」と比較採点してください。
 JSONのみ出力: {{"score":85,"transcript":"認識テキスト","good_words":["正解単語"],"bad_words":["要練習単語"],"feedback":"フィードバック"}}"""
                 try:
@@ -541,7 +534,7 @@ with tab5:
     if not data: st.markdown(ph("✏️ 練習"), unsafe_allow_html=True)
     else:
         st.markdown(f"**Q:** {data.get('blank_q','')} (Hint: {data.get('hint','')})")
-        if st.text_input("答え") == data.get('blank_a',''): st.success("正解！")
+        if st.text_input("答え") == data.get('blank_a',''): st.success("正解")
 
 with tab6:
     if not data: st.markdown(ph("🎭 会話"), unsafe_allow_html=True)
