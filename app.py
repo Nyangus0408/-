@@ -313,8 +313,8 @@ mdl_text = None
 mdl_json = None
 if api_key:
     genai.configure(api_key=api_key)
-    mdl_text = genai.GenerativeModel('gemini-1.5-flash')
-    mdl_json = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
+    mdl_text = genai.GenerativeModel('gemini-pro')
+    mdl_json = genai.GenerativeModel('gemini-pro')
 
 # ── SESSION STATE ────────────────────────────────────────────
 defaults = {"script_data":None,"chat_history":[],"saved_list":[],
