@@ -1,6 +1,5 @@
 # ============================================================
-# English / Deutsch Pitch & Talk ── 多言語対応版
-# 修正: ①JSON専用モデルの追加 ②iPhone音声データのセッション保持強化
+# English / Deutsch Pitch & Talk ── 修正版
 # ============================================================
 import streamlit as st
 import google.generativeai as genai
@@ -315,10 +314,9 @@ mdl_text = None
 mdl_json = None
 if api_key:
     genai.configure(api_key=api_key)
-    # テキスト出力やチャット用の標準モデル
-    mdl_text = genai.GenerativeModel('gemini-1.5-flash')
-    # ユーザー提案のJSON専用モデル
-    mdl_json = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
+    # ★ 修正ポイント1: 'gemini-1.5-flash-latest' に変更し、404エラーを回避
+    mdl_text = genai.GenerativeModel('gemini-1.5-flash-latest')
+    mdl_json = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
 
 # ── SESSION STATE ────────────────────────────────────────────
 defaults = {"script_data":None,"chat_history":[],"saved_list":[],
@@ -403,6 +401,7 @@ with tab1:
     level_key = st.selectbox("📊 学習レベル", list(LEVELS.keys()), index=1)
     scenario = ""
 
+    # ラジオボタンでの入力方法選択
     im = st.radio("入力方法",["✏️ テキスト","🎤 音声入力","📄 PDF","🔗 URL"],
                   horizontal=True, key="input_method_radio")
 
@@ -422,10 +421,8 @@ with tab1:
         
         voice_audio = st.audio_input("🎤 録音ボタンを押して話してください", key="voice_input_ja")
         
-        # 音声が入力された場合の処理（iPhoneリセット対策）
         if voice_audio:
             current_audio_size = len(voice_audio.getvalue())
-            # 同じ音声ファイルで何度もAPIを叩かないためのチェック
             if st.session_state.get("last_audio_size") != current_audio_size:
                 if mdl_text:
                     with st.spinner("文字起こし中..."):
@@ -437,14 +434,9 @@ with tab1:
                         else:
                             st.error("❌ 音声の認識に失敗しました。")
         
-        # 音声テキストがセッションに存在する場合、テキストエリアに表示
-        if st.session_state.voice_text:
-            edit_txt = st.text_area("認識されたテキスト（編集可）",
-                                    value=st.session_state.voice_text, height=80)
-            # ユーザーが編集した内容をセッションに同期
-            st.session_state.voice_text = edit_txt
-            # 生成用に user_input にも格納
-            user_input = edit_txt
+        # ★ 修正ポイント2: iPhoneの画面更新対策。テキストエリアの値を常に session_state に同期させ、user_input にも確実に格納する。
+        user_input = st.text_area("認識されたテキスト（編集可）", value=st.session_state.get("voice_text", ""), height=80)
+        st.session_state.voice_text = user_input
 
     elif im == "📄 PDF":
         pdf_file = st.file_uploader("PDFファイルを選択", type=["pdf"])
@@ -537,10 +529,9 @@ with tab4:
                 ap = f"""この音声を{'Deutschen' if dl=='de' else '英語'}として文字起こしし、「{data.get('english','')}」と比較採点してください。
 JSONのみ出力: {{"score":85,"transcript":"認識テキスト","good_words":["正解単語"],"bad_words":["要練習単語"],"feedback":"フィードバック"}}"""
                 try:
-                    # ここでもJSON専用モデルを使用
                     res = mdl_json.generate_content([ap, {"mime_type": audio_val.type, "data": audio_val.getvalue()}])
                     rd = json.loads(res.text.strip())
-                    st.json(rd) # 採点結果の表示（レイアウトを簡略化）
+                    st.json(rd)
                 except Exception as e: st.error(f"分析エラー: {e}")
 
 # ============================================================
