@@ -105,6 +105,37 @@ header[data-testid="stHeader"]{background:transparent}
 .save-card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;
   margin-bottom:12px;transition:box-shadow .2s}
 .save-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.1)}
+
+/* ── Streamlit デフォルトのアラート配色を上書き ── */
+/* warning(黄) → 水色 */
+[data-testid="stAlert"][data-type="warning"]{
+  background:#f0f9ff!important;
+  border-color:#7dd3fc!important;
+  color:#0369a1!important;
+  border-radius:12px!important;
+}
+/* info(青) → 水色系 */
+[data-testid="stAlert"][data-type="info"]{
+  background:#f0f9ff!important;
+  border-color:#7dd3fc!important;
+  color:#0369a1!important;
+  border-radius:12px!important;
+}
+/* success(緑) */
+[data-testid="stAlert"][data-type="success"]{
+  border-radius:12px!important;
+}
+/* error(赤) */
+[data-testid="stAlert"][data-type="error"]{
+  border-radius:12px!important;
+}
+/* spinner */
+[data-testid="stSpinner"]>div{border-radius:12px!important;}
+/* selectbox */
+[data-baseweb="select"] [data-baseweb="input"]{border-radius:10px!important;}
+/* テキストエリア・インプットのラベル */
+.stTextArea label,.stTextInput label,.stSelectbox label{
+  font-size:12px!important;font-weight:700!important;color:#334155!important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -323,13 +354,17 @@ def do_generate(prompt: str, sys_p: str) -> dict:
     if not m: raise ValueError("JSONが見つかりません")
     return json.loads(m.group())
 
-def transcribe(audio_bytes: bytes, lang: str = 'en') -> str:
-    inst = ("この音声を日本語として文字起こしし、テキストのみ出力してください。"
-            if lang == 'en' else
-            "Schreibe dieses Audio als deutschen Text auf und gib nur den Text aus.")
+def transcribe(audio_bytes: bytes, lang: str = 'en') -> tuple:
+    """
+    常に日本語として文字起こし（出力言語に関わらず入力は日本語）
+    Returns: (text: str, error: str)
+    """
+    inst = "この音声を日本語として文字起こしし、テキストのみ出力してください。句読点は省略可。"
     try:
-        return call_audio(inst, audio_bytes).strip()
-    except: return ""
+        result = call_audio(inst, audio_bytes).strip()
+        return result, ""
+    except Exception as e:
+        return "", str(e)
 
 
 # ── PROMPT BUILDERS ──────────────────────────────────────────
@@ -502,22 +537,28 @@ with tab1:
 
     elif im == "🎤 音声入力":
         st.markdown(f"""
-<div style="background:{C['light']};border:1px solid {C['border']};border-radius:14px;
+<div style="background:white;border:2px solid {C['main']};border-radius:14px;
      padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px;">
+  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
     🎤 マイクで録音 → 自動文字起こし</div>
   <div style="font-size:11px;color:#64748b;">
-    録音ボタンを押して話してください。iPhone・Androidどちらでも動作します。</div>
+    <strong>日本語で話してください</strong>（入力は常に日本語・出力言語は自動変換）。<br>
+    iPhone・Androidどちらでも動作します。</div>
 </div>""", unsafe_allow_html=True)
-        voice_audio = st.audio_input("🎤 録音ボタンを押して話してください", key="voice_input_ja")
+        voice_audio = st.audio_input("🎤 録音ボタンを押して日本語で話してください", key="voice_input_ja")
         if voice_audio and st.session_state.get("_client"):
             with st.spinner("文字起こし中..."):
-                txt = transcribe(voice_audio.getvalue(), lang)
+                txt, err = transcribe(voice_audio.getvalue(), lang)
                 if txt:
                     st.session_state.voice_text = txt
                     st.success(f"✅ 認識: {txt}")
                 else:
-                    st.warning("⚠️ 音声を認識できませんでした。もう一度お試しください。")
+                    detail = f"<br><span style='font-size:10px;color:#94a3b8;'>詳細: {err[:80]}</span>" if err else ""
+                    st.markdown(f"""
+<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;
+     padding:12px 16px;font-size:13px;color:#0369a1;">
+  🔄 音声を認識できませんでした。間を置いてもう一度お試しください。{detail}
+</div>""", unsafe_allow_html=True)
         if st.session_state.voice_text:
             user_input = st.text_area("認識されたテキスト（編集可）",
                                       value=st.session_state.voice_text,
@@ -525,9 +566,9 @@ with tab1:
 
     elif im == "📄 PDF":
         st.markdown(f"""
-<div style="background:{C['light']};border:1px solid {C['border']};border-radius:14px;
+<div style="background:white;border:2px solid {C['main']};border-radius:14px;
      padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px;">
+  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
     📄 製品カタログ・資料PDF → スクリプト自動生成</div>
   <div style="font-size:11px;color:#64748b;">
     PDFをアップロードすると内容を要約してスクリプトを作ります。</div>
@@ -544,9 +585,9 @@ with tab1:
 
     elif im == "🔗 URL":
         st.markdown(f"""
-<div style="background:{C['light']};border:1px solid {C['border']};border-radius:14px;
+<div style="background:white;border:2px solid {C['main']};border-radius:14px;
      padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px;">
+  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
     🔗 WebサイトURL → 内容要約 → スクリプト生成</div>
   <div style="font-size:11px;color:#64748b;">
     会社HP・製品ページなどのURLを入力してください。</div>
@@ -573,7 +614,11 @@ with tab1:
         elif not st.session_state.get("_client"):
             st.error("❌ APIクライアントが初期化されていません。ページを再読み込みしてください。")
         elif not user_input or not user_input.strip():
-            st.warning("内容を入力してください。")
+            st.markdown("""
+<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;
+     padding:12px 16px;font-size:13px;color:#0369a1;">
+  📝 テキスト・音声・PDF・URLのいずれかで内容を入力してください。
+</div>""", unsafe_allow_html=True)
         else:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
