@@ -20,7 +20,7 @@ try:
 except: BS4_OK = False
 
 # ── MODEL NAME ── 最新モデルに更新
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
 
 # ── PAGE CONFIG ──────────────────────────────────────────────
 st.set_page_config(page_title="Pitch & Talk",
