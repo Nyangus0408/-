@@ -383,10 +383,14 @@ def call_audio(prompt: str, audio_bytes: bytes, call_type: str = "voice_transcri
 
     for attempt in range(MAX_RETRIES):
         try:
+            # dict形式を使用（SDK バージョン互換性が高い）
+            audio_b64 = base64.b64encode(audio_bytes).decode()
             resp = st.session_state["_client"].models.generate_content(
                 model=GEMINI_MODEL,
-                contents=[types.Part.from_text(prompt),
-                           types.Part.from_bytes(data=audio_bytes, mime_type=mime)])
+                contents=[
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime, "data": audio_b64}}
+                ])
             st.session_state["api_usage"][call_type] = \
                 st.session_state["api_usage"].get(call_type, 0) + 1
             return resp.text
@@ -1082,16 +1086,35 @@ with tab7:
                     st.rerun()
 
 
-# ── フィラーカード ────────────────────────────────────────────
-if is_biz and data:
+# ── 重要語彙カード（スクリプト生成後に自動表示）────────────────
+if data and data.get('vocab'):
     dl, DC, DLS = dl_info(data)
-    fb_bg  = "#eff6ff" if dl=='en' else "#fffbeb"
-    fb_bdr = "#bfdbfe" if dl=='en' else "#fde68a"
-    fb_tx  = "#1d4ed8" if dl=='en' else "#b45309"
-    fc = "".join([f'<div class="ep-filler-card" style="background:{fb_bg};border:1px solid {fb_bdr};"><div class="ep-filler-en" style="color:{fb_tx};">{fp_}</div><div class="ep-filler-jp">{jp}</div></div>'
-                  for fp_,jp in FILLERS[dl]])
+    tts_bcp = DLS['tts_bcp']
+    cards_html = ""
+    for word, meaning in data['vocab'].items():
+        w_safe = word.replace("'", "\\'").replace('"', '\\"')
+        onclick = (f"var u=new SpeechSynthesisUtterance('{w_safe}');"
+                   f"u.lang='{tts_bcp}';"
+                   f"window.speechSynthesis.cancel();"
+                   f"window.speechSynthesis.speak(u);")
+        cards_html += f"""
+<div onclick="{onclick}"
+     style="background:{DC['light']};border:1px solid {DC['border']};border-radius:12px;
+            padding:10px 14px;cursor:pointer;transition:transform .1s;flex-shrink:0;"
+     onmousedown="this.style.transform='scale(.95)'"
+     onmouseup="this.style.transform='scale(1)'"
+     ontouchstart="this.style.transform='scale(.95)'"
+     ontouchend="this.style.transform='scale(1)'">
+  <div style="font-weight:800;color:{DC['main']};font-size:13px;">{word}</div>
+  <div style="color:#64748b;font-size:11px;margin-top:3px;">{meaning}</div>
+  <div style="font-size:9px;color:#94a3b8;margin-top:2px;">🔊 タップで発音</div>
+</div>"""
+
     st.markdown(f"""
-<div class="ep-filler-wrap">
-  <div style="font-size:11px;font-weight:700;color:#94a3b8;">{DLS['flag']} {DLS['filler_label']}</div>
-  <div class="ep-filler-grid">{fc}</div>
+<div style="background:white;border:1px solid #e2e8f0;border-radius:16px;
+     padding:14px 14px 16px;margin-top:20px;">
+  <div style="font-size:11px;font-weight:700;color:#94a3b8;margin-bottom:10px;">
+    {DLS['flag']} 📝 スクリプトの重要語彙（タップで発音）
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;">{cards_html}</div>
 </div>""", unsafe_allow_html=True)
