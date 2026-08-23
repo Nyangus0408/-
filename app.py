@@ -1,13 +1,13 @@
 # ============================================================
-# English / Deutsch Pitch & Talk ── シンプル練習アプリ版
-# 変更: 展示会要素完全削除 / 語彙発音ボタン修正 / 汎用学習アプリ化
+# English / Deutsch Pitch & Talk ── V2.0 スマート単語帳対応版
+# 新機能: スマート単語帳 / AI例文生成 / SRS間隔反復 / 4種クイズ
 # ============================================================
 import streamlit as st
 from google import genai
 from google.genai import types
-import json, base64, io, time, os, re, requests, hashlib
+import json, base64, io, time, os, re, requests, hashlib, uuid, random
 from gtts import gTTS
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 try:
     from pypdf import PdfReader; PDF_OK = True
@@ -18,7 +18,6 @@ try:
     from bs4 import BeautifulSoup; BS4_OK = True
 except: BS4_OK = False
 
-# ── 設定 ─────────────────────────────────────────────────────
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 MAX_RETRIES  = 3
 RETRY_WAITS  = [10, 20, 30]
@@ -26,16 +25,15 @@ RETRY_WAITS  = [10, 20, 30]
 st.set_page_config(page_title="Pitch & Talk", page_icon="🌐",
                    layout="centered", initial_sidebar_state="collapsed")
 
-# ── CSS ──────────────────────────────────────────────────────
 st.markdown("""
 <style>
 .stApp{background:#f0f2f5}
 .block-container{padding-top:0!important;max-width:840px}
 header[data-testid="stHeader"]{background:transparent}
 .stTabs [data-baseweb="tab-list"]{background:white;border-bottom:2px solid #e2e8f0;
-  gap:0;padding:0 6px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.06)}
-.stTabs [data-baseweb="tab"]{font-weight:700!important;font-size:11px!important;
-  padding:11px 11px!important;border-radius:0!important;color:#94a3b8!important}
+  gap:0;padding:0 4px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.stTabs [data-baseweb="tab"]{font-weight:700!important;font-size:10px!important;
+  padding:10px 9px!important;border-radius:0!important;color:#94a3b8!important}
 .stTabs [aria-selected="true"]{color:var(--acc,#1d4ed8)!important;
   border-bottom:3px solid var(--acc,#1d4ed8)!important;background:transparent!important}
 .stTabs [data-baseweb="tab-panel"]{padding-top:14px!important}
@@ -55,31 +53,22 @@ header[data-testid="stHeader"]{background:transparent}
   border:1px solid rgba(255,255,255,.2)!important;color:white!important;border-radius:8px!important}
 .ep-card{background:white;border-radius:16px;padding:20px;margin:10px 0;
   box-shadow:0 2px 12px rgba(0,0,0,.07);border:1px solid #e8edf5}
-.ep-script{border-radius:16px;padding:20px;margin-bottom:14px;
-  border-left-width:6px;border-left-style:solid}
+.ep-script{border-radius:16px;padding:20px;margin-bottom:14px;border-left-width:6px;border-left-style:solid}
 .ep-script-text{font-size:20px;font-weight:700;color:#1e293b;line-height:1.8;letter-spacing:.3px}
 .ep-label{border-radius:20px;padding:4px 14px;font-size:11px;font-weight:800;
   display:inline-block;margin-bottom:10px;color:white;letter-spacing:.5px}
-.ep-tip{background:#fffbeb;border:1px solid #fde68a;border-radius:14px;
-  padding:14px 18px;margin:12px 0;font-size:13px;line-height:1.7}
+.ep-tip{background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:14px 18px;margin:12px 0;font-size:13px;line-height:1.7}
 .ep-score-box{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
 .ep-score-num{font-size:52px;font-weight:900;line-height:1}
 .ep-bar-wrap{background:#f1f5f9;border-radius:8px;height:12px;overflow:hidden;margin-bottom:14px}
 .ep-bar{height:100%;border-radius:8px}
-.ep-chip-ok{background:#dcfce7;color:#16a34a;border-radius:6px;padding:3px 9px;
-  font-weight:600;display:inline-block;margin:2px;font-size:13px}
-.ep-chip-ng{background:#fee2e2;color:#dc2626;border-radius:6px;padding:3px 9px;
-  font-weight:600;display:inline-block;margin:2px;font-size:13px;text-decoration:line-through}
-.ep-chat-wrap{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:14px;
-  min-height:200px;max-height:340px;overflow-y:auto;margin-bottom:10px}
-.ep-bubble-user{border-radius:18px 18px 4px 18px;padding:10px 14px;
-  margin:7px 0 7px 15%;font-size:13px;line-height:1.5;color:white}
-.ep-bubble-ai{background:white;border:1px solid #e2e8f0;border-radius:18px 18px 18px 4px;
-  padding:10px 14px;margin:7px 15% 7px 0;font-size:13px;line-height:1.5;
-  box-shadow:0 1px 4px rgba(0,0,0,.05)}
+.ep-chip-ok{background:#dcfce7;color:#16a34a;border-radius:6px;padding:3px 9px;font-weight:600;display:inline-block;margin:2px;font-size:13px}
+.ep-chip-ng{background:#fee2e2;color:#dc2626;border-radius:6px;padding:3px 9px;font-weight:600;display:inline-block;margin:2px;font-size:13px;text-decoration:line-through}
+.ep-chat-wrap{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:14px;min-height:200px;max-height:340px;overflow-y:auto;margin-bottom:10px}
+.ep-bubble-user{border-radius:18px 18px 4px 18px;padding:10px 14px;margin:7px 0 7px 15%;font-size:13px;line-height:1.5;color:white}
+.ep-bubble-ai{background:white;border:1px solid #e2e8f0;border-radius:18px 18px 18px 4px;padding:10px 14px;margin:7px 15% 7px 0;font-size:13px;line-height:1.5;box-shadow:0 1px 4px rgba(0,0,0,.05)}
 .ep-bubble-label{font-size:11px;color:#94a3b8;margin-bottom:3px}
-.ep-para{display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff7ed;
-  border-radius:8px;margin-bottom:6px;font-size:13px;flex-wrap:wrap}
+.ep-para{display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff7ed;border-radius:8px;margin-bottom:6px;font-size:13px;flex-wrap:wrap}
 .ep-para-hard{text-decoration:line-through;color:#f87171}
 .ep-para-easy{font-weight:800;color:#16a34a}
 .ep-para-note{color:#94a3b8;font-size:11px}
@@ -87,86 +76,56 @@ header[data-testid="stHeader"]{background:transparent}
 .ep-ph-icon{font-size:48px;margin-bottom:12px}
 .ep-ph-title{font-size:15px;font-weight:700;margin-bottom:6px;color:#64748b}
 .ep-ph-sub{font-size:12px}
-.ep-alert-g{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;
-  padding:12px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;margin-top:12px}
-.ep-alert-o{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;
-  padding:12px;text-align:center;color:#ea580c;font-size:12px;margin-top:12px}
-.save-card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;
-  margin-bottom:12px;transition:box-shadow .2s}
+.ep-alert-g{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;margin-top:12px}
+.ep-alert-o{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px;text-align:center;color:#ea580c;font-size:12px;margin-top:12px}
+.save-card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:12px;transition:box-shadow .2s}
 .save-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.1)}
-[data-testid="stAlert"][data-type="warning"]{background:#f0f9ff!important;
-  border-color:#7dd3fc!important;color:#0369a1!important;border-radius:12px!important}
-[data-testid="stAlert"][data-type="info"]{background:#f0f9ff!important;
-  border-color:#7dd3fc!important;color:#0369a1!important;border-radius:12px!important}
+.word-card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:10px}
+.status-0{background:#f1f5f9;color:#64748b;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
+.status-1{background:#dbeafe;color:#1d4ed8;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
+.status-2{background:#dcfce7;color:#16a34a;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
+[data-testid="stAlert"][data-type="warning"]{background:#f0f9ff!important;border-color:#7dd3fc!important;color:#0369a1!important;border-radius:12px!important}
 [data-testid="stAlert"][data-type="success"]{border-radius:12px!important}
 [data-testid="stAlert"][data-type="error"]{border-radius:12px!important}
 </style>
 """, unsafe_allow_html=True)
-
 
 # ── 言語設定 ─────────────────────────────────────────────────
 LANG = {
     'en': {'flag':'🇺🇸','name':'English','tts':'en','tts_bcp':'en-US',
            'app_title':'English Pitch & Talk','subtitle':'英語学習トレーナー',
            'script_lbl':'英文スクリプト（チャンク読み）',
-           'switch_btn':'🇩🇪 Deutschに切替',
-           'accent':'#1d4ed8'},
+           'switch_btn':'🇩🇪 Deutschに切替','accent':'#1d4ed8'},
     'de': {'flag':'🇩🇪','name':'Deutsch','tts':'de','tts_bcp':'de-DE',
            'app_title':'Deutsch Pitch & Talk','subtitle':'ドイツ語学習トレーナー',
            'script_lbl':'ドイツ語スクリプト（チャンク読み）',
-           'switch_btn':'🇺🇸 Englishに切替',
-           'accent':'#b45309'},
+           'switch_btn':'🇺🇸 Englishに切替','accent':'#b45309'},
 }
-
 LEVELS = {
-    "🌱 初学者 (A1)": {
-        'en':"be動詞・have・like等の最基本動詞のみ。主語＋動詞の最小構造。5単語以内。",
-        'de':"nur sein/haben/mögen. Einfachste Satzstruktur. Maximal 5 Wörter."},
-    "📗 基礎 (A2)": {
-        'en':"中学英語。1文12単語以内。SVO構造のみ。関係代名詞・接続詞禁止。",
-        'de':"Grundlegendes Deutsch. Max. 12 Wörter. Einfache SVO-Struktur."},
-    "📘 中級 (B1/B2)": {
-        'en':"高校英語。接続詞（because/when）可。やや複雑な構造OK。",
-        'de':"Mittelstufe. Konjunktionen (weil/obwohl) erlaubt."},
-    "📙 上級 (C1)": {
-        'en':"ビジネス英語。受動態・完了形・専門用語適宜使用。",
-        'de':"Geschäftsdeutsch. Passiv, Konjunktiv II, Fachvokabular erlaubt."},
-    "🚀 ネイティブ風": {
-        'en':"ネイティブが日常的に使う自然な表現。慣用句・略語も使用可。",
-        'de':"Natürliches Deutsch. Idiome und Umgangssprache erlaubt."},
+    "🌱 初学者 (A1)": {'en':"be動詞・have・like等の最基本動詞のみ。5単語以内。",'de':"nur sein/haben/mögen. Max. 5 Wörter."},
+    "📗 基礎 (A2)":   {'en':"中学英語。1文12単語以内。SVO構造のみ。",'de':"Max. 12 Wörter. Einfache SVO-Struktur."},
+    "📘 中級 (B1/B2)":{'en':"高校英語。接続詞可。やや複雑な構造OK。",'de':"Konjunktionen (weil/obwohl) erlaubt."},
+    "📙 上級 (C1)":   {'en':"ビジネス英語。受動態・完了形・専門用語適宜使用。",'de':"Geschäftsdeutsch. Passiv, Fachvokabular."},
+    "🚀 ネイティブ風": {'en':"ネイティブが日常的に使う自然な表現。慣用句可。",'de':"Natürliches Deutsch. Idiome erlaubt."},
 }
-
 SCENARIOS = {
-    'en': {
-        "🎯 おまかせ":       "入力内容に最適な場面",
-        "☕ カフェ/レストラン": "飲食店での注文・会計",
-        "🗺️ 観光/道案内":    "観光地・道を聞く",
-        "🏨 ホテル/交通":     "チェックイン・タクシー",
-        "🛒 買い物":          "商品・値段・返品",
-        "👋 自己紹介/雑談":   "名前・職業・趣味",
-        "💼 ビジネス会話":    "会議・電話・プレゼン",
-        "🚨 緊急/トラブル":   "体調不良・助けを求める",
-        "✈️ 空港/機内":       "搭乗手続き・入国審査",
-    },
-    'de': {
-        "🎯 おまかせ":       "passende Alltagsausdrücke",
-        "☕ Café/Restaurant": "Bestellen, Bezahlen",
-        "🗺️ Tourismus":      "Sehenswürdigkeiten, Weg fragen",
-        "🏨 Hotel/Verkehr":   "Check-in, Taxi",
-        "🛒 Einkaufen":       "Produktauswahl, Preise",
-        "👋 Vorstellung":     "Name, Beruf, Hobbys",
-        "💼 Business":        "Meeting, Telefon, Präsentation",
-        "🚨 Notfall":         "Hilfe, Krankheit",
-        "✈️ Flughafen":       "Boarding, Einreise",
-    },
+    'en': {"🎯 おまかせ":"入力内容に最適な場面","☕ カフェ/レストラン":"飲食店での注文・会計",
+           "🗺️ 観光/道案内":"観光地・道を聞く","🏨 ホテル/交通":"チェックイン・タクシー",
+           "🛒 買い物":"商品・値段・返品","👋 自己紹介/雑談":"名前・職業・趣味",
+           "💼 ビジネス会話":"会議・電話・プレゼン","🚨 緊急/トラブル":"体調不良・助けを求める",
+           "✈️ 空港/機内":"搭乗手続き・入国審査"},
+    'de': {"🎯 おまかせ":"passende Ausdrücke","☕ Café/Restaurant":"Bestellen, Bezahlen",
+           "🗺️ Tourismus":"Sehenswürdigkeiten, Weg fragen","🏨 Hotel/Verkehr":"Check-in, Taxi",
+           "🛒 Einkaufen":"Produktauswahl, Preise","👋 Vorstellung":"Name, Beruf, Hobbys",
+           "💼 Business":"Meeting, Telefon, Präsentation","🚨 Notfall":"Hilfe, Krankheit",
+           "✈️ Flughafen":"Boarding, Einreise"},
 }
+STATUS_LABELS = {0: ("⬜", "未学習", "status-0"), 1: ("🔵", "学習中", "status-1"), 2: ("⭐", "習得", "status-2")}
+SRS_INTERVALS  = [1, 3, 7, 14, 30]  # 正解回数に応じた復習間隔（日）
 
-
-# ── HELPERS ──────────────────────────────────────────────────
+# ── ヘルパー ─────────────────────────────────────────────────
 def ac(lang='en'):
-    """言語ごとのアクセントカラー"""
-    if lang == 'de':
-        return {"main":"#b45309","light":"#fffbeb","border":"#fde68a"}
+    if lang == 'de': return {"main":"#b45309","light":"#fffbeb","border":"#fde68a"}
     return {"main":"#1d4ed8","light":"#eff6ff","border":"#bfdbfe"}
 
 def ph(name):
@@ -178,20 +137,55 @@ def compute_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:24]
 
 def compute_cache_key(user_input, lang, level_key, scenario) -> str:
-    combined = f"{user_input}|{lang}|{level_key}|{scenario}|{GEMINI_MODEL}"
-    return hashlib.sha256(combined.encode()).hexdigest()
+    return hashlib.sha256(f"{user_input}|{lang}|{level_key}|{scenario}|{GEMINI_MODEL}".encode()).hexdigest()
 
-# ── 語彙カード HTML（st.components.v1.html用・JavaScript発音付き）
+def calc_next_review(correct_count: int) -> str:
+    """SRS: 正解回数に応じた次回復習日を計算"""
+    days = SRS_INTERVALS[min(correct_count, len(SRS_INTERVALS)-1)]
+    return (date.today() + timedelta(days=days)).isoformat()
+
+def add_to_wordbook(word: str, meaning: str, lang: str,
+                    source_script: str = "", scenario: str = "") -> bool:
+    """単語帳に追加。重複あればFalse"""
+    wb = st.session_state.get("word_book", [])
+    if any(w['word'].lower() == word.lower() and w['lang'] == lang for w in wb):
+        return False
+    wb.append({
+        "id": str(uuid.uuid4())[:8],
+        "word": word, "meaning": meaning, "lang": lang,
+        "scenario": scenario, "example": "", "example_jp": "",
+        "synonyms": [], "usage_note": "",
+        "status": 0, "correct_count": 0,
+        "next_review": date.today().isoformat(),
+        "added_at": date.today().isoformat(),
+        "source_script": source_script[:60],
+    })
+    st.session_state.word_book = wb
+    return True
+
+def update_word_status(word_id: str, is_correct: bool):
+    """クイズ結果に基づきSRS更新"""
+    for i, w in enumerate(st.session_state.word_book):
+        if w['id'] == word_id:
+            if is_correct:
+                w['correct_count'] = w.get('correct_count', 0) + 1
+                w['status'] = 2 if w['correct_count'] >= 4 else (1 if w['correct_count'] >= 1 else 0)
+                w['next_review'] = calc_next_review(w['correct_count'])
+            else:
+                w['correct_count'] = max(0, w.get('correct_count', 0) - 1)
+                w['status'] = min(w.get('status', 0), 1)
+                w['next_review'] = date.today().isoformat()
+            st.session_state.word_book[i] = w
+            break
+
 def render_vocab_html(vocab: dict, tts_lang: str, DC: dict, DLS: dict,
                       show_header: bool = True) -> str:
-    """語彙カードHTML。st.components.v1.html()で使用するため<html>タグ付き"""
-    if not vocab:
-        return "<html><body></body></html>"
+    """発音付き語彙カードHTML (st.components.v1.html用)"""
+    if not vocab: return "<html><body></body></html>"
     cards = ""
     for word, meaning in vocab.items():
-        w_safe = word.replace("'", "\\'").replace('"', '\\"').replace("\n", "")
-        cards += f"""
-<div onclick="speak('{w_safe}')"
+        ws = word.replace("'","\\'").replace('"','\\"').replace("\n","")
+        cards += f"""<div onclick="speak('{ws}')"
      style="background:{DC['light']};border:1px solid {DC['border']};border-radius:12px;
             padding:10px 14px;cursor:pointer;display:inline-block;margin:4px;
             -webkit-tap-highlight-color:transparent;user-select:none;"
@@ -201,769 +195,512 @@ def render_vocab_html(vocab: dict, tts_lang: str, DC: dict, DLS: dict,
   <div style="font-size:12px;color:#64748b;">{meaning}</div>
   <div style="font-size:10px;color:#94a3b8;margin-top:3px;">🔊</div>
 </div>"""
-
-    header = ""
-    if show_header:
-        header = f"""<div style="font-size:11px;font-weight:700;color:#94a3b8;
-                               margin-bottom:10px;">{DLS['flag']} 📝 重要語彙（タップで発音）</div>"""
-
-    return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-</head>
-<body style="margin:0;padding:8px;background:transparent;
-             font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    hdr = f'<div style="font-size:11px;font-weight:700;color:#94a3b8;margin-bottom:10px;">{DLS["flag"]} 📝 重要語彙（タップで発音）</div>' if show_header else ""
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:8px;background:transparent;font-family:-apple-system,sans-serif;">
 <script>
-function speak(text) {{
-  try {{
-    window.speechSynthesis.cancel();
-    var u = new SpeechSynthesisUtterance(text);
-    u.lang = '{tts_lang}';
-    u.rate = 0.9;
-    window.speechSynthesis.speak(u);
-  }} catch(e) {{ console.log('TTS error:', e); }}
-}}
-// iOSのSpeechSynthesisは最初のユーザー操作後にしか動かないため
-// ページ読み込み時にダミー発音を仕込む
-document.addEventListener('touchstart', function init() {{
-  var u = new SpeechSynthesisUtterance('');
-  window.speechSynthesis.speak(u);
-  document.removeEventListener('touchstart', init);
-}}, {{once: true}});
+function speak(t){{try{{window.speechSynthesis.cancel();var u=new SpeechSynthesisUtterance(t);u.lang='{tts_lang}';u.rate=0.9;window.speechSynthesis.speak(u);}}catch(e){{}}}}
+document.addEventListener('touchstart',function i(){{var u=new SpeechSynthesisUtterance('');window.speechSynthesis.speak(u);document.removeEventListener('touchstart',i);}},{{once:true}});
+</script>{hdr}<div style="display:flex;flex-wrap:wrap;">{cards}</div></body></html>"""
+
+def render_listen_html(word: str, tts_lang: str, accent: str) -> str:
+    """リスニングクイズ用 自動再生HTML"""
+    ws = word.replace("'","\\'")
+    return f"""<!DOCTYPE html><html><body style="margin:0;padding:16px;text-align:center;background:transparent;font-family:-apple-system,sans-serif;">
+<script>
+window.onload=function(){{setTimeout(function(){{var u=new SpeechSynthesisUtterance('{ws}');u.lang='{tts_lang}';u.rate=0.9;window.speechSynthesis.speak(u);}},400);}};
+function replay(){{window.speechSynthesis.cancel();var u=new SpeechSynthesisUtterance('{ws}');u.lang='{tts_lang}';u.rate=0.9;window.speechSynthesis.speak(u);}}
 </script>
-{header}
-<div style="display:flex;flex-wrap:wrap;">{cards}</div>
+<div style="font-size:48px;margin-bottom:12px;">🔊</div>
+<button onclick="replay()" style="padding:10px 28px;border:none;border-radius:12px;
+  background:{accent};color:white;font-size:14px;font-weight:700;cursor:pointer;">
+  もう一度聴く</button>
 </body></html>"""
 
-def gen_audio(text: str, lang: str = 'en', accent: str = '#1d4ed8',
-              pid: str = 'epA', enhanced: bool = True) -> str:
+def gen_audio(text:str, lang:str='en', accent:str='#1d4ed8', pid:str='epA', enhanced:bool=True)->str:
     try:
-        tts = gTTS(text=text, lang=lang)
-        fp = io.BytesIO(); tts.write_to_fp(fp); fp.seek(0)
-        b64 = base64.b64encode(fp.read()).decode()
-    except Exception as e:
-        return f'<div style="color:#ef4444;font-size:12px;">音声エラー: {e}</div>'
-
+        tts=gTTS(text=text,lang=lang); fp=io.BytesIO(); tts.write_to_fp(fp); fp.seek(0)
+        b64=base64.b64encode(fp.read()).decode()
+    except Exception as e: return f'<div style="color:#ef4444;font-size:12px;">音声エラー: {e}</div>'
     if not enhanced:
-        return f"""<audio id="{pid}" style="width:100%;border-radius:12px;margin-bottom:8px;">
-<source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>
+        return f"""<audio id="{pid}" style="width:100%;border-radius:12px;margin-bottom:8px;"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>
 <div style="display:flex;gap:8px;">
-<button onclick="var a=document.getElementById('{pid}');a.playbackRate=0.8;a.play();"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;
-  cursor:pointer;font-weight:700;font-size:11px;">🐢 0.8x<br>
-  <span style="font-size:9px;opacity:.7;">ゆっくり</span></button>
-<button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.0;a.play();"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;
-  cursor:pointer;font-weight:700;font-size:11px;">▶️ 1.0x<br>
-  <span style="font-size:9px;opacity:.7;">標準</span></button>
-<button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.2;a.play();"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;
-  cursor:pointer;font-weight:700;font-size:11px;">⚡ 1.2x<br>
-  <span style="font-size:9px;opacity:.7;">速め</span></button>
-</div>"""
+<button onclick="var a=document.getElementById('{pid}');a.playbackRate=0.8;a.play();" style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">🐢 0.8x<br><span style="font-size:9px;opacity:.7;">ゆっくり</span></button>
+<button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.0;a.play();" style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">▶️ 1.0x<br><span style="font-size:9px;opacity:.7;">標準</span></button>
+<button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.2;a.play();" style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">⚡ 1.2x<br><span style="font-size:9px;opacity:.7;">速め</span></button></div>"""
+    return f"""<div style="background:#f8fafc;border-radius:14px;padding:16px;border:1px solid #e2e8f0;">
+<audio id="{pid}" preload="auto"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>
+<div style="margin-bottom:12px;">
+  <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-bottom:5px;"><span id="{pid}Cur">0:00</span><span id="{pid}Dur">--:--</span></div>
+  <div style="background:#e2e8f0;border-radius:6px;height:8px;cursor:pointer;overflow:hidden;"
+       onclick="var r=this.getBoundingClientRect();var a=document.getElementById('{pid}');a.currentTime=(event.clientX-r.left)/r.width*a.duration;">
+    <div id="{pid}Bar" style="background:{accent};height:100%;border-radius:6px;width:0%;pointer-events:none;transition:width .2s;"></div></div></div>
+<div style="display:flex;gap:8px;margin-bottom:10px;">
+  <button onclick="var a=document.getElementById('{pid}');a.currentTime=Math.max(0,a.currentTime-2);" style="padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap;">⏪ 2秒戻し</button>
+  <button id="{pid}Btn" onclick="var a=document.getElementById('{pid}');if(a.paused){{a.play();}}else{{a.pause();}}" style="flex:1;padding:10px;border:none;border-radius:10px;background:{accent};color:white;cursor:pointer;font-weight:700;font-size:13px;">▶️ 再生</button></div>
+<div style="display:flex;gap:6px;">
+  <button onclick="var a=document.getElementById('{pid}');a.playbackRate=0.8;a.play();" style="flex:1;padding:8px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">🐢 0.8x<br><span style="font-size:9px;opacity:.7;">ゆっくり</span></button>
+  <button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.0;a.play();" style="flex:1;padding:8px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">▶️ 1.0x<br><span style="font-size:9px;opacity:.7;">標準</span></button>
+  <button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.2;a.play();" style="flex:1;padding:8px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">⚡ 1.2x<br><span style="font-size:9px;opacity:.7;">速め</span></button></div></div>
+<script>(function(){{var a=document.getElementById('{pid}');var bar=document.getElementById('{pid}Bar');var cur=document.getElementById('{pid}Cur');var dur=document.getElementById('{pid}Dur');var btn=document.getElementById('{pid}Btn');function fmt(s){{var m=Math.floor(s/60);var ss=Math.floor(s%60);return m+':'+(ss<10?'0':'')+ss;}}if(!a)return;a.addEventListener('timeupdate',function(){{if(a.duration&&!isNaN(a.duration)){{bar.style.width=(a.currentTime/a.duration*100)+'%';cur.textContent=fmt(a.currentTime);}}}});a.addEventListener('loadedmetadata',function(){{dur.textContent=fmt(a.duration);}});a.addEventListener('play',function(){{btn.textContent='⏸ 一時停止';btn.style.background='#ef4444';}});a.addEventListener('pause',function(){{btn.textContent='▶️ 再生';btn.style.background='{accent}';}});a.addEventListener('ended',function(){{btn.textContent='▶️ 再生';btn.style.background='{accent}';bar.style.width='0%';}});}})();</script>"""
 
-    return f"""
-<div style="background:#f8fafc;border-radius:14px;padding:16px;border:1px solid #e2e8f0;">
-  <audio id="{pid}" preload="auto">
-    <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-  </audio>
-  <div style="margin-bottom:12px;">
-    <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-bottom:5px;">
-      <span id="{pid}Cur">0:00</span><span id="{pid}Dur">--:--</span>
-    </div>
-    <div style="background:#e2e8f0;border-radius:6px;height:8px;cursor:pointer;overflow:hidden;"
-         onclick="var r=this.getBoundingClientRect();var a=document.getElementById('{pid}');
-                  a.currentTime=(event.clientX-r.left)/r.width*a.duration;">
-      <div id="{pid}Bar" style="background:{accent};height:100%;border-radius:6px;width:0%;
-           pointer-events:none;transition:width .2s;"></div>
-    </div>
-  </div>
-  <div style="display:flex;gap:8px;margin-bottom:10px;">
-    <button onclick="var a=document.getElementById('{pid}');
-                     a.currentTime=Math.max(0,a.currentTime-2);"
-      style="padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;background:white;
-      cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap;">⏪ 2秒戻し</button>
-    <button id="{pid}Btn"
-      onclick="var a=document.getElementById('{pid}');if(a.paused){{a.play();}}else{{a.pause();}}"
-      style="flex:1;padding:10px;border:none;border-radius:10px;background:{accent};
-      color:white;cursor:pointer;font-weight:700;font-size:13px;">▶️ 再生</button>
-  </div>
-  <div style="display:flex;gap:6px;">
-    <button onclick="var a=document.getElementById('{pid}');a.playbackRate=0.8;a.play();"
-      style="flex:1;padding:8px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;
-      cursor:pointer;font-weight:700;font-size:11px;">🐢 0.8x<br>
-      <span style="font-size:9px;opacity:.7;">ゆっくり</span></button>
-    <button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.0;a.play();"
-      style="flex:1;padding:8px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;
-      cursor:pointer;font-weight:700;font-size:11px;">▶️ 1.0x<br>
-      <span style="font-size:9px;opacity:.7;">標準</span></button>
-    <button onclick="var a=document.getElementById('{pid}');a.playbackRate=1.2;a.play();"
-      style="flex:1;padding:8px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;
-      cursor:pointer;font-weight:700;font-size:11px;">⚡ 1.2x<br>
-      <span style="font-size:9px;opacity:.7;">速め</span></button>
-  </div>
-</div>
-<script>
-(function(){{
-  var a=document.getElementById('{pid}');
-  var bar=document.getElementById('{pid}Bar');
-  var cur=document.getElementById('{pid}Cur');
-  var dur=document.getElementById('{pid}Dur');
-  var btn=document.getElementById('{pid}Btn');
-  function fmt(s){{var m=Math.floor(s/60);var ss=Math.floor(s%60);return m+':'+(ss<10?'0':'')+ss;}}
-  if(!a)return;
-  a.addEventListener('timeupdate',function(){{
-    if(a.duration&&!isNaN(a.duration)){{
-      bar.style.width=(a.currentTime/a.duration*100)+'%';
-      cur.textContent=fmt(a.currentTime);}}
-  }});
-  a.addEventListener('loadedmetadata',function(){{dur.textContent=fmt(a.duration);}});
-  a.addEventListener('play',function(){{btn.textContent='⏸ 一時停止';btn.style.background='#ef4444';}});
-  a.addEventListener('pause',function(){{btn.textContent='▶️ 再生';btn.style.background='{accent}';}});
-  a.addEventListener('ended',function(){{btn.textContent='▶️ 再生';btn.style.background='{accent}';bar.style.width='0%';}});
-}})();
-</script>"""
-
-def detect_audio_mime(data: bytes) -> str:
-    if not data or len(data) < 12: return 'audio/mp4'
-    h = data[:12]
-    if h[:4] == b'RIFF' and h[8:12] == b'WAVE': return 'audio/wav'
-    if h[4:8] == b'ftyp' or h[8:12] == b'ftyp': return 'audio/mp4'
-    if h[:4] == b'\x1aE\xdf\xa3': return 'audio/webm'
-    if h[:4] == b'OggS': return 'audio/ogg'
-    if h[:3] == b'ID3' or (h[0] == 0xFF and (h[1] & 0xE0) == 0xE0): return 'audio/mp3'
+def detect_audio_mime(data:bytes)->str:
+    if not data or len(data)<12: return 'audio/mp4'
+    h=data[:12]
+    if h[:4]==b'RIFF' and h[8:12]==b'WAVE': return 'audio/wav'
+    if h[4:8]==b'ftyp' or h[8:12]==b'ftyp': return 'audio/mp4'
+    if h[:4]==b'\x1aE\xdf\xa3': return 'audio/webm'
+    if h[:4]==b'OggS': return 'audio/ogg'
+    if h[:3]==b'ID3' or (h[0]==0xFF and (h[1]&0xE0)==0xE0): return 'audio/mp3'
     return 'audio/mp4'
 
-def extract_pdf(file) -> str:
+def extract_pdf(file)->str:
     if not PDF_OK: return "※ requirements.txt に pypdf を追加してください"
-    reader = PdfReader(io.BytesIO(file.read()))
+    reader=PdfReader(io.BytesIO(file.read()))
     return "\n".join(p.extract_text() or "" for p in reader.pages[:10])[:3000]
 
-def extract_url(url: str) -> str:
+def extract_url(url:str)->str:
     try:
-        r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+        r=requests.get(url,headers={"User-Agent":"Mozilla/5.0"},timeout=10)
         if BS4_OK:
-            soup = BeautifulSoup(r.text, "html.parser")
+            soup=BeautifulSoup(r.text,"html.parser")
             for t in soup(["script","style","nav","footer","header"]): t.decompose()
-            txt = soup.get_text(separator="\n", strip=True)
-        else:
-            txt = re.sub(r'<[^>]+>', '', r.text)
-        return re.sub(r'\n{3,}', '\n\n', txt)[:3000]
+            txt=soup.get_text(separator="\n",strip=True)
+        else: txt=re.sub(r'<[^>]+>','',r.text)
+        return re.sub(r'\n{3,}','\n\n',txt)[:3000]
     except Exception as e: return f"取得失敗: {e}"
 
-
-# ── API呼び出し共通管理 ───────────────────────────────────────
-def call_text(prompt: str, system: str = "", call_type: str = "text_generate") -> str:
-    if not st.session_state.get("_client"):
-        raise RuntimeError("APIクライアント未初期化")
-    cfg = types.GenerateContentConfig(system_instruction=system) if system else None
+# ── API共通管理 ───────────────────────────────────────────────
+def call_text(prompt:str, system:str="", call_type:str="text_generate")->str:
+    if not st.session_state.get("_client"): raise RuntimeError("APIクライアント未初期化")
+    cfg=types.GenerateContentConfig(system_instruction=system) if system else None
     for attempt in range(MAX_RETRIES):
         try:
-            resp = st.session_state["_client"].models.generate_content(
-                model=GEMINI_MODEL, contents=prompt, config=cfg)
-            st.session_state["api_usage"][call_type] = \
-                st.session_state["api_usage"].get(call_type, 0) + 1
+            resp=st.session_state["_client"].models.generate_content(model=GEMINI_MODEL,contents=prompt,config=cfg)
+            st.session_state["api_usage"][call_type]=st.session_state["api_usage"].get(call_type,0)+1
             return resp.text
         except Exception as e:
-            err = str(e)
-            is_rpm  = "429" in err or "RESOURCE_EXHAUSTED" in err or "rateLimit" in err.lower()
-            is_busy = "503" in err or "UNAVAILABLE" in err
-            if (is_rpm or is_busy) and attempt < MAX_RETRIES - 1:
-                st.toast(f"⏱ 高負荷のため {RETRY_WAITS[attempt]}秒後に自動リトライ…")
-                time.sleep(RETRY_WAITS[attempt]); continue
-            if is_rpm:
-                raise Exception(f"⏱ レート制限: しばらく待ってから再試行してください。"
-                                f"（使用回数: {sum(st.session_state['api_usage'].values())}回）")
+            err=str(e); is_rpm="429" in err or "RESOURCE_EXHAUSTED" in err; is_busy="503" in err or "UNAVAILABLE" in err
+            if (is_rpm or is_busy) and attempt<MAX_RETRIES-1:
+                st.toast(f"⏱ 高負荷のため {RETRY_WAITS[attempt]}秒後に自動リトライ…"); time.sleep(RETRY_WAITS[attempt]); continue
+            if is_rpm: raise Exception(f"⏱ レート制限: しばらく待ってから再試行してください。（使用: {sum(st.session_state['api_usage'].values())}回）")
             if is_busy: raise Exception("🔄 サーバー高負荷中。少し時間をおいてください。")
             raise
 
-def call_audio(prompt: str, audio_bytes: bytes, call_type: str = "voice_transcribe") -> str:
-    if not st.session_state.get("_client"):
-        raise RuntimeError("APIクライアント未初期化")
-    mime = detect_audio_mime(audio_bytes)
-    audio_b64 = base64.b64encode(audio_bytes).decode()
+def call_audio(prompt:str, audio_bytes:bytes, call_type:str="voice_transcribe")->str:
+    if not st.session_state.get("_client"): raise RuntimeError("APIクライアント未初期化")
+    mime=detect_audio_mime(audio_bytes); audio_b64=base64.b64encode(audio_bytes).decode()
     for attempt in range(MAX_RETRIES):
         try:
-            resp = st.session_state["_client"].models.generate_content(
-                model=GEMINI_MODEL,
-                contents=[
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": mime, "data": audio_b64}}
-                ])
-            st.session_state["api_usage"][call_type] = \
-                st.session_state["api_usage"].get(call_type, 0) + 1
+            resp=st.session_state["_client"].models.generate_content(model=GEMINI_MODEL,
+                contents=[{"text":prompt},{"inline_data":{"mime_type":mime,"data":audio_b64}}])
+            st.session_state["api_usage"][call_type]=st.session_state["api_usage"].get(call_type,0)+1
             return resp.text
         except Exception as e:
-            err = str(e)
-            is_rpm  = "429" in err or "RESOURCE_EXHAUSTED" in err
-            is_busy = "503" in err or "UNAVAILABLE" in err
-            if (is_rpm or is_busy) and attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_WAITS[attempt]); continue
+            err=str(e); is_rpm="429" in err or "RESOURCE_EXHAUSTED" in err; is_busy="503" in err or "UNAVAILABLE" in err
+            if (is_rpm or is_busy) and attempt<MAX_RETRIES-1: time.sleep(RETRY_WAITS[attempt]); continue
             if is_rpm: raise Exception("⏱ レート制限: しばらく待ってから再試行してください。")
             if is_busy: raise Exception("🔄 サーバー高負荷中。少し時間をおいてください。")
             raise
 
-def transcribe(audio_bytes: bytes) -> tuple:
-    """日本語文字起こし（ハッシュで重複防止）→ (text, error, from_cache)"""
-    audio_hash = compute_hash(audio_bytes)
-    if audio_hash == st.session_state.get("last_transcribe_hash", ""):
-        return st.session_state.get("voice_text", ""), "", True
-    inst = "この音声を日本語として文字起こしし、テキストのみ出力してください。句読点は省略可。"
+def transcribe(audio_bytes:bytes)->tuple:
+    audio_hash=compute_hash(audio_bytes)
+    if audio_hash==st.session_state.get("last_transcribe_hash",""):
+        return st.session_state.get("voice_text",""),"",True
+    inst="この音声を日本語として文字起こしし、テキストのみ出力してください。句読点は省略可。"
     try:
-        result = call_audio(inst, audio_bytes, "voice_transcribe").strip()
-        st.session_state["last_transcribe_hash"] = audio_hash
-        return result, "", False
-    except Exception as e:
-        return "", str(e), False
+        result=call_audio(inst,audio_bytes,"voice_transcribe").strip()
+        st.session_state["last_transcribe_hash"]=audio_hash
+        return result,"",False
+    except Exception as e: return "",str(e),False
 
-def do_generate(prompt: str, sys_p: str, cache_key: str = "") -> dict:
-    cache = st.session_state.get("generation_cache", {})
-    if cache_key and cache_key in cache:
-        return cache[cache_key]
-    raw = call_text(prompt, system=sys_p, call_type="text_generate")
-    m = re.search(r'\{[\s\S]*\}', raw)
+def do_generate(prompt:str, sys_p:str, cache_key:str="")->dict:
+    cache=st.session_state.get("generation_cache",{})
+    if cache_key and cache_key in cache: return cache[cache_key]
+    raw=call_text(prompt,system=sys_p,call_type="text_generate")
+    m=re.search(r'\{[\s\S]*\}',raw)
     if not m: raise ValueError("JSONが見つかりません。もう一度お試しください。")
-    result = json.loads(m.group())
-    if cache_key:
-        st.session_state["generation_cache"][cache_key] = result
+    result=json.loads(m.group())
+    if cache_key: st.session_state["generation_cache"][cache_key]=result
     return result
 
+def generate_word_example(word:str, meaning:str, lang:str, scenario:str="")->dict:
+    """単語の例文・類義語をGeminiで生成"""
+    target="ドイツ語" if lang=='de' else "英語"
+    prompt=f"""単語「{word}」（意味: {meaning}）について、JSONのみで出力してください（コードブロック不要）。
+[目標言語]: {target} [場面]: {scenario if scenario else "日常会話"} [難易度]: A2〜B1
+{{"example":"{target}の例文（1文、自然）","example_jp":"例文の日本語訳","synonyms":["類義語1","類義語2"],"usage_note":"使い方・注意点（日本語で1〜2文）"}}"""
+    try:
+        raw=call_text(prompt,call_type="text_generate")
+        m=re.search(r'\{[\s\S]*\}',raw)
+        return json.loads(m.group()) if m else {}
+    except: return {}
 
-# ── プロンプト ─────────────────────────────────────────────────
-def build_prompt(user_input, level_key, lang, scenario=""):
-    level_inst = LEVELS.get(level_key, LEVELS["📗 基礎 (A2)"])[lang]
-    scene  = scenario if scenario else ("一般的な場面" if lang == 'en' else "Allgemeines")
-    target = "Deutschen" if lang == 'de' else "英語"
-    rule   = ("Max. 12 Wörter. SVO-Struktur. Grammatik dem Level anpassen."
-              if lang == 'de' else "1文最大12単語。SVO構造優先。レベルに合わせた語彙・文法を厳守。")
-    return f"""
-以下の条件でスクリプトをJSONのみで生成してください（コードブロック不要）。
-[入力文]: {user_input}
-[目標言語]: {target}
-[場面]: {scene}
-[レベル指示]: {level_inst}
-[ルール]: {rule}
+def build_prompt(user_input,level_key,lang,scenario=""):
+    level_inst=LEVELS.get(level_key,LEVELS["📗 基礎 (A2)"])[lang]
+    scene=scenario if scenario else ("一般的な場面" if lang=='en' else "Allgemeines")
+    target="Deutschen" if lang=='de' else "英語"
+    rule="Max. 12 Wörter. SVO-Struktur." if lang=='de' else "1文最大12単語。SVO構造優先。"
+    return f"""以下の条件でスクリプトをJSONのみで生成してください（コードブロック不要）。
+[入力文]: {user_input} [目標言語]: {target} [場面]: {scene} [レベル指示]: {level_inst} [ルール]: {rule}
+{{"english":"{target}文","english_jp":"自然な日本語訳","chunked":"スラッシュ区切り","grammar":"文法・フレーズ解説（日本語）",
+"vocab":{{"単語/Wort":"意味（日本語）"}},"blank_q":"穴埋め文（___）","blank_a":"正解の単語","hint":"ヒント（日本語）",
+"paraphrases":[{{"difficult":"難しい表現","simple":"簡単な言い換え","note":"メモ（日本語）"}}]}}"""
 
-{{
-  "english": "{target}文（複数文はスペースで区切る）",
-  "english_jp": "自然な日本語訳",
-  "chunked": "スラッシュ区切り（Our product / is light.）",
-  "grammar": "文法・フレーズ解説（日本語）",
-  "vocab": {{"単語/Wort": "意味（日本語）"}},
-  "blank_q": "穴埋め文（___）",
-  "blank_a": "正解の単語",
-  "hint": "ヒント（日本語）",
-  "paraphrases": [{{"difficult":"難しい表現","simple":"簡単な言い換え","note":"メモ（日本語）"}}]
-}}"""
+def build_context_prompt(context,src_label,lang,level_key,scenario=""):
+    level_inst=LEVELS.get(level_key,LEVELS["📗 基礎 (A2)"])[lang]; target="Deutschen" if lang=='de' else "英語"
+    return f"""{src_label}のテキストを要約し、{target}学習コンテンツをJSONのみで作成（コードブロック不要）。
+[テキスト]: {context[:2000]} [場面]: {scenario} [レベル]: {level_inst}
+{{"english":"{target}文","english_jp":"日本語訳","chunked":"チャンク区切り","grammar":"文法解説（日本語）","vocab":{{"単語":"意味"}},
+"blank_q":"穴埋め（___）","blank_a":"正解","hint":"ヒント（日本語）","paraphrases":[{{"difficult":"難表現","simple":"簡単","note":"メモ（日本語）"}}]}}"""
 
-def build_context_prompt(context, src_label, lang, level_key, scenario=""):
-    level_inst = LEVELS.get(level_key, LEVELS["📗 基礎 (A2)"])[lang]
-    target = "Deutschen" if lang == 'de' else "英語"
-    return f"""
-{src_label}のテキストを要約し、{target}学習コンテンツをJSONのみで作成（コードブロック不要）。
-[テキスト]: {context[:2000]}
-[場面]: {scenario}
-[レベル]: {level_inst}
-{{"english":"{target}文","english_jp":"日本語訳","chunked":"チャンク区切り",
-  "grammar":"文法解説（日本語）","vocab":{{"単語":"意味"}},
-  "blank_q":"穴埋め（___）","blank_a":"正解","hint":"ヒント（日本語）",
-  "paraphrases":[{{"difficult":"難表現","simple":"簡単","note":"メモ（日本語）"}}]}}"""
-
-
-# ── API KEY & SESSION STATE ───────────────────────────────────
-api_key = ""
-try: api_key = st.secrets.get("GEMINI_API_KEY", st.secrets.get("API_KEY",""))
+# ── APIキー & セッション ──────────────────────────────────────
+api_key=""
+try: api_key=st.secrets.get("GEMINI_API_KEY",st.secrets.get("API_KEY",""))
 except: pass
-if not api_key: api_key = os.environ.get("GEMINI_API_KEY","")
+if not api_key: api_key=os.environ.get("GEMINI_API_KEY","")
 
-API_USAGE_KEYS = ["text_generate","voice_transcribe","pronunciation",
-                  "blank_regenerate","roleplay","roleplay_difficult"]
-defaults = {
-    "script_data":None, "chat_history":[], "saved_list":[],
-    "voice_text":"", "url_text_cache":"", "language":"en", "_client":None,
-    "last_transcribe_hash":"", "last_pronunciation_key":"", "pronunciation_result":None,
-    "generation_cache":{}, "api_usage":{k:0 for k in API_USAGE_KEYS},
+API_USAGE_KEYS=["text_generate","voice_transcribe","pronunciation","blank_regenerate","roleplay","roleplay_difficult"]
+defaults={
+    "script_data":None,"chat_history":[],"saved_list":[],
+    "voice_text":"","url_text_cache":"","language":"en","_client":None,
+    "last_transcribe_hash":"","last_pronunciation_key":"","pronunciation_result":None,
+    "generation_cache":{},"api_usage":{k:0 for k in API_USAGE_KEYS},
+    "word_book":[],           # スマート単語帳
+    "quiz_state":None,        # クイズ状態
 }
 for k,v in defaults.items():
-    if k not in st.session_state: st.session_state[k] = v
+    if k not in st.session_state: st.session_state[k]=v
 
 if api_key and st.session_state["_client"] is None:
-    try: st.session_state["_client"] = genai.Client(api_key=api_key)
+    try: st.session_state["_client"]=genai.Client(api_key=api_key)
     except Exception as e: st.error(f"❌ クライアント初期化失敗: {e}")
 
-lang = st.session_state.language
-LS   = LANG[lang]
-C    = ac(lang)
+lang=st.session_state.language; LS=LANG[lang]; C=ac(lang)
 
-# ── SIDEBAR ───────────────────────────────────────────────────
+# ── サイドバー ────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(f"""
-<div style="padding:14px 0 8px;">
-  <div style="font-size:19px;font-weight:900;color:white;margin-bottom:3px;">
-    {LS['flag']} {LS['app_title']}</div>
-  <div style="font-size:11px;color:rgba(255,255,255,.5);">{LS['subtitle']}</div>
-</div><hr style="border-color:rgba(255,255,255,.1);margin:8px 0 14px;">
-""", unsafe_allow_html=True)
+    st.markdown(f"""<div style="padding:14px 0 8px;"><div style="font-size:19px;font-weight:900;color:white;margin-bottom:3px;">{LS['flag']} {LS['app_title']}</div>
+<div style="font-size:11px;color:rgba(255,255,255,.5);">{LS['subtitle']}</div></div>
+<hr style="border-color:rgba(255,255,255,.1);margin:8px 0 14px;">""", unsafe_allow_html=True)
     if not api_key:
-        mk = st.text_input("🔑 Gemini API Key", type="password", placeholder="AIzaSy...")
+        mk=st.text_input("🔑 Gemini API Key",type="password",placeholder="AIzaSy...")
         if mk:
-            api_key = mk
-            st.session_state["_client"] = genai.Client(api_key=mk)
-            st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ APIキー設定済み</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="color:#fbbf24;font-size:12px;font-weight:700;">⚠️ APIキー未設定</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ APIキー自動連携済み</div>', unsafe_allow_html=True)
-    usage = st.session_state.get("api_usage",{})
-    total = sum(usage.values())
-    st.markdown(f"""
-<hr style="border-color:rgba(255,255,255,.1);margin:14px 0;">
-<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.6);margin-bottom:8px;">
-  🤖 Gemini API 使用状況</div>
+            api_key=mk; st.session_state["_client"]=genai.Client(api_key=mk)
+            st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ APIキー設定済み</div>',unsafe_allow_html=True)
+        else: st.markdown('<div style="color:#fbbf24;font-size:12px;font-weight:700;">⚠️ APIキー未設定</div>',unsafe_allow_html=True)
+    else: st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ APIキー自動連携済み</div>',unsafe_allow_html=True)
+    usage=st.session_state.get("api_usage",{}); total=sum(usage.values())
+    wb=st.session_state.get("word_book",[]); wb_count=len(wb)
+    wb_due=sum(1 for w in wb if w.get('next_review',date.today().isoformat())<=date.today().isoformat() and w.get('status',0)<2)
+    st.markdown(f"""<hr style="border-color:rgba(255,255,255,.1);margin:14px 0;">
+<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.6);margin-bottom:8px;">🤖 Gemini API 使用状況</div>
 <div style="font-size:11px;color:rgba(255,255,255,.7);line-height:2.0;">
-  モデル: <span style="color:white;font-weight:700;">{GEMINI_MODEL}</span><br>
-  合計: <strong style="color:white;font-size:14px;">{total}回</strong><br>
-  📝 生成:{usage.get('text_generate',0)} 🎤 音声:{usage.get('voice_transcribe',0)}<br>
-  🔊 発音:{usage.get('pronunciation',0)} ✏️ 穴埋め:{usage.get('blank_regenerate',0)}<br>
-  🎭 会話:{usage.get('roleplay',0)+usage.get('roleplay_difficult',0)}
-</div>
+モデル: <span style="color:white;font-weight:700;">{GEMINI_MODEL}</span><br>
+合計: <strong style="color:white;font-size:14px;">{total}回</strong><br>
+📝 生成:{usage.get('text_generate',0)} 🎤 音声:{usage.get('voice_transcribe',0)}<br>
+🔊 発音:{usage.get('pronunciation',0)} ✏️ 穴埋め:{usage.get('blank_regenerate',0)}<br>
+🎭 会話:{usage.get('roleplay',0)+usage.get('roleplay_difficult',0)}</div>
 <hr style="border-color:rgba(255,255,255,.1);margin:14px 0;">
-<div style="font-size:10px;color:rgba(255,255,255,.3);line-height:1.8;">
-📦 SDK: google-genai | 🔊 TTS: gTTS<br>
-🔄 自動リトライ: 最大{MAX_RETRIES}回
-</div>
-""", unsafe_allow_html=True)
+<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.6);margin-bottom:8px;">📔 単語帳</div>
+<div style="font-size:11px;color:rgba(255,255,255,.7);line-height:2.0;">
+登録: <strong style="color:white;">{wb_count}語</strong> ／ 今日の復習: <strong style="color:#fbbf24;">{wb_due}語</strong>
+</div>""", unsafe_allow_html=True)
 
-# ── HEADER ────────────────────────────────────────────────────
-st.markdown(f"<style>:root{{--acc:{C['main']};}}</style>", unsafe_allow_html=True)
-
-st.markdown(f"""
-<div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc);color:white;
-     padding:18px 22px 14px;border-radius:16px;margin-bottom:4px;
-     box-shadow:0 4px 20px rgba(0,0,0,.15);">
-  <div style="font-size:21px;font-weight:900;letter-spacing:-.5px;margin-bottom:3px;">
-    {LS['flag']} {LS['app_title']}</div>
-  <div style="font-size:11px;opacity:.75;">{LS['subtitle']}</div>
-</div>
-""", unsafe_allow_html=True)
-
-col_sp, col_lang = st.columns([3,1])
+# ── ヘッダー ──────────────────────────────────────────────────
+st.markdown(f"<style>:root{{--acc:{C['main']};}}</style>",unsafe_allow_html=True)
+st.markdown(f"""<div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc);color:white;
+     padding:18px 22px 14px;border-radius:16px;margin-bottom:4px;box-shadow:0 4px 20px rgba(0,0,0,.15);">
+  <div style="font-size:21px;font-weight:900;letter-spacing:-.5px;margin-bottom:3px;">{LS['flag']} {LS['app_title']}</div>
+  <div style="font-size:11px;opacity:.75;">{LS['subtitle']}</div></div>""",unsafe_allow_html=True)
+col_sp,col_lang=st.columns([3,1])
 with col_lang:
-    if st.button(LS['switch_btn'], key="lang_toggle", use_container_width=True):
-        st.session_state.language  = 'de' if lang=='en' else 'en'
-        st.session_state.script_data   = None
-        st.session_state.chat_history  = []
-        st.rerun()
+    if st.button(LS['switch_btn'],key="lang_toggle",use_container_width=True):
+        st.session_state.language='de' if lang=='en' else 'en'
+        st.session_state.script_data=None; st.session_state.chat_history=[]; st.rerun()
 
-sys_p = {
-    'en': "あなたは英語学習のコーチです。日本語入力を元に、実用的でわかりやすい英文スクリプトを作成してください。",
-    'de': "Sie sind ein Deutschlerncoach. Erstellen Sie auf Basis des japanischen Textes praktische Sätze.",
-}.get(lang, "")
+sys_p={'en':"あなたは英語学習のコーチです。日本語入力を元に、実用的でわかりやすい英文スクリプトを作成してください。",
+       'de':"Sie sind ein Deutschlerncoach. Erstellen Sie auf Basis des japanischen Textes praktische Sätze."}.get(lang,"")
 
-# ── TABS ──────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6,tab7 = st.tabs(
-    ["📝 入力","📖 スクリプト","🔊 音読","🎤 発音","✏️ 練習","🎭 会話","📚 マイ学習帳"])
-data = st.session_state.script_data
+# ── 8タブ ─────────────────────────────────────────────────────
+tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8=st.tabs(
+    ["📝 入力","📖 スクリプト","🔊 音読","🎤 発音","✏️ 練習","🎭 会話","📚 学習帳","📔 単語帳"])
+data=st.session_state.script_data
+def get_dl(data): dl=data.get('_lang','en') if data else lang; return dl,ac(dl),LANG[dl]
 
 
 # ============================================================
 # TAB 1: INPUT
 # ============================================================
 with tab1:
-    level_key = st.selectbox("📊 学習レベル", list(LEVELS.keys()), index=1)
-    st.markdown(f'<div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">📌 {LEVELS[level_key][lang][:45]}…</div>', unsafe_allow_html=True)
-    scenario = st.selectbox("🎬 シナリオ", list(SCENARIOS[lang].keys()))
-
-    im = st.radio("入力方法",["✏️ テキスト","🎤 音声入力","📄 PDF","🔗 URL"],
-                  horizontal=True, key="input_method_radio")
-    user_input = ""
-
-    if im == "✏️ テキスト":
-        ph_txt = {'en':"例: 明日から新しい仕事が始まります。",
-                  'de':"例: Morgen beginnt meine neue Arbeit."}.get(lang,"")
-        user_input = st.text_area("スクリプトにしたい内容を入力（日本語でOK）",
-                                  placeholder=ph_txt, height=100, key="text_input_main")
-
-    elif im == "🎤 音声入力":
-        st.markdown(f"""
-<div style="background:white;border:2px solid {C['main']};border-radius:14px;
-     padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
-    🎤 マイクで録音 → 自動文字起こし（日本語で話してください）</div>
-  <div style="font-size:11px;color:#64748b;">
-    iPhone・Androidどちらでも動作します。同じ録音はAPIを再送信しません。</div>
-</div>""", unsafe_allow_html=True)
-        voice_audio = st.audio_input("🎤 録音ボタンを押して話してください", key="voice_input_ja")
+    level_key=st.selectbox("📊 学習レベル",list(LEVELS.keys()),index=1)
+    st.markdown(f'<div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">📌 {LEVELS[level_key][lang][:45]}…</div>',unsafe_allow_html=True)
+    scenario=st.selectbox("🎬 シナリオ",list(SCENARIOS[lang].keys()))
+    im=st.radio("入力方法",["✏️ テキスト","🎤 音声入力","📄 PDF","🔗 URL"],horizontal=True,key="input_method_radio")
+    user_input=""
+    if im=="✏️ テキスト":
+        ph_txt={'en':"例: 明日から新しい仕事が始まります。",'de':"例: Morgen beginnt meine neue Arbeit."}.get(lang,"")
+        user_input=st.text_area("スクリプトにしたい内容を入力（日本語でOK）",placeholder=ph_txt,height=100,key="text_input_main")
+    elif im=="🎤 音声入力":
+        st.markdown(f'<div style="background:white;border:2px solid {C["main"]};border-radius:14px;padding:14px;margin-bottom:12px;"><div style="font-size:12px;font-weight:700;color:{C["main"]};margin-bottom:6px;">🎤 マイクで録音 → 自動文字起こし（日本語で話してください）</div><div style="font-size:11px;color:#64748b;">iPhone・Androidどちらでも動作します。同じ録音はAPIを再送信しません。</div></div>',unsafe_allow_html=True)
+        voice_audio=st.audio_input("🎤 録音ボタンを押して話してください",key="voice_input_ja")
         if voice_audio and st.session_state.get("_client"):
-            with st.spinner("文字起こし中..."):
-                txt, err, from_cache = transcribe(voice_audio.getvalue())
+            with st.spinner("文字起こし中..."): txt,err,from_cache=transcribe(voice_audio.getvalue())
             if txt:
-                st.session_state.voice_text = txt
-                if from_cache:
-                    st.markdown(f'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;font-size:11px;color:#16a34a;">⚡ 保存済み文字起こしを使用（API節約）</div>', unsafe_allow_html=True)
-                else:
-                    st.success(f"✅ 認識: {txt}")
+                st.session_state.voice_text=txt
+                if from_cache: st.markdown('<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;font-size:11px;color:#16a34a;">⚡ 保存済み文字起こしを使用（API節約）</div>',unsafe_allow_html=True)
+                else: st.success(f"✅ 認識: {txt}")
             elif err:
-                detail = f"<br><span style='font-size:10px;color:#94a3b8;'>詳細: {err[:100]}</span>"
-                st.markdown(f"""<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;
-     padding:12px 16px;font-size:13px;color:#0369a1;">
-  🔄 音声を認識できませんでした。間を置いてもう一度お試しください。{detail}</div>""", unsafe_allow_html=True)
+                st.markdown(f'<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;padding:12px 16px;font-size:13px;color:#0369a1;">🔄 音声を認識できませんでした。間を置いてもう一度お試しください。<br><span style="font-size:10px;color:#94a3b8;">詳細: {err[:100]}</span></div>',unsafe_allow_html=True)
         if st.session_state.voice_text:
-            user_input = st.text_area("認識されたテキスト（編集可）",
-                                      value=st.session_state.voice_text, height=80, key="voice_edit")
-
-    elif im == "📄 PDF":
-        st.markdown(f"""<div style="background:white;border:2px solid {C['main']};border-radius:14px;
-     padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
-    📄 PDF → スクリプト自動生成</div>
-  <div style="font-size:11px;color:#64748b;">PDFをアップロードすると内容を要約してスクリプトを作ります。</div>
-</div>""", unsafe_allow_html=True)
-        pdf_file = st.file_uploader("PDFファイルを選択", type=["pdf"], key="pdf_upload")
+            user_input=st.text_area("認識されたテキスト（編集可）",value=st.session_state.voice_text,height=80,key="voice_edit")
+    elif im=="📄 PDF":
+        st.markdown(f'<div style="background:white;border:2px solid {C["main"]};border-radius:14px;padding:14px;margin-bottom:12px;"><div style="font-size:12px;font-weight:700;color:{C["main"]};margin-bottom:6px;">📄 PDF → スクリプト自動生成</div><div style="font-size:11px;color:#64748b;">PDFをアップロードすると内容を要約してスクリプトを作ります。</div></div>',unsafe_allow_html=True)
+        pdf_file=st.file_uploader("PDFファイルを選択",type=["pdf"],key="pdf_upload")
         if pdf_file:
             if not PDF_OK: st.error("❌ requirements.txt に pypdf を追加してください。")
             else:
-                with st.spinner("PDFを読み込み中..."): pdf_text = extract_pdf(pdf_file)
-                st.text_area("抽出テキスト（確認用）", value=pdf_text[:400]+"…", height=70, disabled=True)
-                user_input = f"[PDF内容]: {pdf_text}"; st.success("✅ PDFを読み込みました。")
-
-    elif im == "🔗 URL":
-        st.markdown(f"""<div style="background:white;border:2px solid {C['main']};border-radius:14px;
-     padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
-    🔗 URL → 内容要約 → スクリプト生成</div>
-  <div style="font-size:11px;color:#64748b;">WebサイトのURLを入力してください。</div>
-</div>""", unsafe_allow_html=True)
-        url_in = st.text_input("URLを入力", placeholder="https://example.com", key="url_input")
-        if url_in and st.button("🔍 URLを取得", key="fetch_url"):
-            with st.spinner("取得中..."):
-                url_text = extract_url(url_in)
+                with st.spinner("PDFを読み込み中..."): pdf_text=extract_pdf(pdf_file)
+                st.text_area("抽出テキスト（確認用）",value=pdf_text[:400]+"…",height=70,disabled=True)
+                user_input=f"[PDF内容]: {pdf_text}"; st.success("✅ PDFを読み込みました。")
+    elif im=="🔗 URL":
+        st.markdown(f'<div style="background:white;border:2px solid {C["main"]};border-radius:14px;padding:14px;margin-bottom:12px;"><div style="font-size:12px;font-weight:700;color:{C["main"]};margin-bottom:6px;">🔗 URL → 内容要約 → スクリプト生成</div><div style="font-size:11px;color:#64748b;">WebサイトのURLを入力してください。</div></div>',unsafe_allow_html=True)
+        url_in=st.text_input("URLを入力",placeholder="https://example.com",key="url_input")
+        if url_in and st.button("🔍 URLを取得",key="fetch_url"):
+            with st.spinner("取得中..."): url_text=extract_url(url_in)
             if "失敗" in url_text: st.error(url_text)
             else:
-                st.text_area("取得テキスト", value=url_text[:400]+"…", height=70, disabled=True)
-                st.session_state["url_text_cache"] = url_text; st.success("✅ 取得完了。")
-        if st.session_state.get("url_text_cache"):
-            user_input = f"[URL内容]: {st.session_state['url_text_cache']}"
+                st.text_area("取得テキスト",value=url_text[:400]+"…",height=70,disabled=True)
+                st.session_state["url_text_cache"]=url_text; st.success("✅ 取得完了。")
+        if st.session_state.get("url_text_cache"): user_input=f"[URL内容]: {st.session_state['url_text_cache']}"
 
-    st.markdown('<div style="font-size:10px;color:#94a3b8;margin-top:4px;margin-bottom:10px;">💡 短い文・要点ほど高品質なコンテンツが生成されます</div>', unsafe_allow_html=True)
-
-    if st.button("✨ スクリプト＆学習コンテンツを生成する", type="primary",
-                 use_container_width=True, key="gen_btn"):
-        if not api_key:
-            st.error("❌ APIキーが設定されていません。")
-        elif not st.session_state.get("_client"):
-            st.error("❌ APIクライアントが初期化されていません。ページを再読み込みしてください。")
+    st.markdown('<div style="font-size:10px;color:#94a3b8;margin-top:4px;margin-bottom:10px;">💡 短い文・要点ほど高品質なコンテンツが生成されます</div>',unsafe_allow_html=True)
+    if st.button("✨ スクリプト＆学習コンテンツを生成する",type="primary",use_container_width=True,key="gen_btn"):
+        if not api_key: st.error("❌ APIキーが設定されていません。")
+        elif not st.session_state.get("_client"): st.error("❌ APIクライアントが初期化されていません。ページを再読み込みしてください。")
         elif not user_input or not user_input.strip():
-            st.markdown("""<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;
-     padding:12px 16px;font-size:13px;color:#0369a1;">
-  📝 テキスト・音声・PDF・URLのいずれかで内容を入力してください。</div>""", unsafe_allow_html=True)
+            st.markdown('<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;padding:12px 16px;font-size:13px;color:#0369a1;">📝 テキスト・音声・PDF・URLのいずれかで内容を入力してください。</div>',unsafe_allow_html=True)
         else:
-            is_ctx = user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]")
-            ck = compute_cache_key(user_input, lang, level_key, scenario)
-            if not is_ctx and ck in st.session_state.get("generation_cache", {}):
-                result = st.session_state["generation_cache"][ck]
-                result.update({"_source_ja":user_input[:100],"_level":level_key,"_lang":lang})
-                st.session_state.script_data = result; st.session_state.chat_history = []; data = result
-                st.markdown('<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:10px 14px;font-size:13px;color:#16a34a;">⚡ 保存済み生成結果を使用しました（API節約）。「📖 スクリプト」タブを確認してください。</div>', unsafe_allow_html=True)
+            is_ctx=user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]")
+            ck=compute_cache_key(user_input,lang,level_key,scenario)
+            if not is_ctx and ck in st.session_state.get("generation_cache",{}):
+                result=st.session_state["generation_cache"][ck]
+                result.update({"_source_ja":user_input[:100],"_level":level_key,"_lang":lang,"_scenario":scenario})
+                st.session_state.script_data=result; st.session_state.chat_history=[]; data=result
+                st.markdown('<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:10px 14px;font-size:13px;color:#16a34a;">⚡ 保存済み生成結果を使用しました（API節約）。「📖 スクリプト」タブを確認してください。</div>',unsafe_allow_html=True)
             else:
                 with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                     try:
-                        prompt = (build_context_prompt(user_input, im, lang, level_key, scenario)
-                                  if is_ctx else
-                                  build_prompt(user_input, level_key, lang, scenario))
-                        result = do_generate(prompt, sys_p, cache_key="" if is_ctx else ck)
-                        result.update({"_source_ja":user_input[:100],"_level":level_key,"_lang":lang})
-                        st.session_state.script_data = result
-                        st.session_state.chat_history = []
-                        st.session_state.voice_text = ""
-                        data = result
-                        st.success("✅ 生成完了！「📖 スクリプト」タブに進んでください。")
-                        st.balloons()
+                        prompt=(build_context_prompt(user_input,im,lang,level_key,scenario) if is_ctx else build_prompt(user_input,level_key,lang,scenario))
+                        result=do_generate(prompt,sys_p,cache_key="" if is_ctx else ck)
+                        result.update({"_source_ja":user_input[:100],"_level":level_key,"_lang":lang,"_scenario":scenario})
+                        st.session_state.script_data=result; st.session_state.chat_history=[]; st.session_state.voice_text=""; data=result
+                        st.success("✅ 生成完了！「📖 スクリプト」タブに進んでください。"); st.balloons()
                     except Exception as e:
-                        err = str(e)
-                        if "API_KEY" in err.upper() or "403" in err:
-                            st.error(f"❌ APIキーエラー: {err}")
-                        else:
-                            st.error(f"❌ {err}")
-
-
-# ── 以降のタブ共通 ─────────────────────────────────────────────
-def get_dl_info(data):
-    dl  = data.get('_lang','en') if data else lang
-    return dl, ac(dl), LANG[dl]
+                        err=str(e)
+                        if "API_KEY" in err.upper() or "403" in err: st.error(f"❌ APIキーエラー: {err}")
+                        else: st.error(f"❌ {err}")
 
 
 # ============================================================
 # TAB 2: SCRIPT
 # ============================================================
 with tab2:
-    if not data: st.markdown(ph("📖 スクリプト"), unsafe_allow_html=True)
+    if not data: st.markdown(ph("📖 スクリプト"),unsafe_allow_html=True)
     else:
-        dl, DC, DLS = get_dl_info(data)
-        tts_bcp = DLS['tts_bcp']
-
-        st.markdown(f"""
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-  <span style="font-size:11px;color:#94a3b8;">{DLS['flag']} {DLS['name']} ｜
-  レベル: <strong style="color:{DC['main']};">{data.get('_level','')}</strong></span>
-</div>
-<div class="ep-script" style="background:{DC['light']};border:2px solid {DC['border']};
-     border-left-color:{DC['main']};">
+        dl,DC,DLS=get_dl(data); tts_bcp=DLS['tts_bcp']
+        st.markdown(f"""<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+  <span style="font-size:11px;color:#94a3b8;">{DLS['flag']} {DLS['name']} ｜ レベル: <strong style="color:{DC['main']};">{data.get('_level','')}</strong></span></div>
+<div class="ep-script" style="background:{DC['light']};border:2px solid {DC['border']};border-left-color:{DC['main']};">
   <div class="ep-label" style="background:{DC['main']};">📖 {DLS['script_lbl']}</div>
-  <div class="ep-script-text">{data.get('chunked', data.get('english',''))}</div>
-  <div style="font-size:13px;color:#475569;margin-top:10px;padding:8px;
-       background:rgba(255,255,255,.7);border-radius:8px;">🇯🇵 {data.get('english_jp','')}</div>
-  <div style="font-size:11px;color:#94a3b8;margin-top:6px;">/ はチャンク（意味の塊）の区切りです</div>
-</div>""", unsafe_allow_html=True)
+  <div class="ep-script-text">{data.get('chunked',data.get('english',''))}</div>
+  <div style="font-size:13px;color:#475569;margin-top:10px;padding:8px;background:rgba(255,255,255,.7);border-radius:8px;">🇯🇵 {data.get('english_jp','')}</div>
+  <div style="font-size:11px;color:#94a3b8;margin-top:6px;">/ はチャンク（意味の塊）の区切りです</div></div>""",unsafe_allow_html=True)
+        if st.button("📚 マイ学習帳に保存",use_container_width=True,key="save_btn"):
+            item={"id":int(time.time()),"title":data.get("english","")[:40]+"…","english":data.get("english",""),"english_jp":data.get("english_jp",""),
+                  "chunked":data.get("chunked",""),"level":data.get("_level",""),"lang":data.get("_lang","en"),
+                  "source_ja":data.get("_source_ja",""),"saved_at":datetime.now().strftime("%m/%d %H:%M"),"data":data}
+            st.session_state.saved_list.append(item); st.success(f"✅ 保存しました！（📚 {len(st.session_state.saved_list)} 件）")
+        st.markdown(f'<div class="ep-card"><div class="ep-label" style="background:{DC["main"]};">📚 文法・フレーズ解説</div><div style="font-size:13px;color:#475569;line-height:1.8;">{data.get("grammar","")}</div></div>',unsafe_allow_html=True)
 
-        if st.button("📚 マイ学習帳に保存", use_container_width=True, key="save_btn"):
-            item = {"id":int(time.time()),"title":data.get("english","")[:40]+"…",
-                    "english":data.get("english",""),"english_jp":data.get("english_jp",""),
-                    "chunked":data.get("chunked",""),"level":data.get("_level",""),
-                    "lang":data.get("_lang","en"),"source_ja":data.get("_source_ja",""),
-                    "saved_at":datetime.now().strftime("%m/%d %H:%M"),"data":data}
-            st.session_state.saved_list.append(item)
-            st.success(f"✅ 保存しました！（📚 {len(st.session_state.saved_list)} 件）")
-
-        st.markdown(f"""<div class="ep-card">
-  <div class="ep-label" style="background:{DC['main']};">📚 文法・フレーズ解説</div>
-  <div style="font-size:13px;color:#475569;line-height:1.8;">{data.get('grammar','')}</div>
-</div>""", unsafe_allow_html=True)
-
-        # 語彙カード（st.components.v1.html → JavaScript発音が確実に動作）
+        # 語彙カード（発音 + 📌単語帳追加ボタン）
         if data.get('vocab'):
-            st.markdown(f'<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px;">📝 重要語彙（タップで発音）</div>', unsafe_allow_html=True)
-            vocab_html = render_vocab_html(data['vocab'], tts_bcp, DC, DLS, show_header=False)
-            st.components.v1.html(vocab_html,
-                                  height=max(80, len(data['vocab']) * 72 + 20),
-                                  scrolling=False)
-
-        st.markdown('<div class="ep-tip">💡 <strong>チャンク読みのコツ：</strong>スラッシュで区切り、<strong>左から順番に</strong>意味をつかみながら読みましょう！</div>', unsafe_allow_html=True)
+            vocab_items=list(data['vocab'].items())
+            st.markdown(f'<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px;">📝 重要語彙（タップで発音 ／ 📌で単語帳に追加）</div>',unsafe_allow_html=True)
+            vocab_html=render_vocab_html(data['vocab'],tts_bcp,DC,DLS,show_header=False)
+            st.components.v1.html(vocab_html,height=max(80,len(vocab_items)*72+20),scrolling=False)
+            n=min(len(vocab_items),4); cols=st.columns(n)
+            for i,(word,meaning) in enumerate(vocab_items):
+                with cols[i%n]:
+                    in_book=any(w['word'].lower()==word.lower() and w['lang']==dl for w in st.session_state.get('word_book',[]))
+                    if in_book:
+                        st.markdown(f'<div style="text-align:center;font-size:11px;color:#16a34a;padding:4px;">✅ 登録済み<br><strong>{word}</strong></div>',unsafe_allow_html=True)
+                    else:
+                        if st.button(f"📌 {word}",key=f"add_v2_{word}_{i}",use_container_width=True):
+                            add_to_wordbook(word,meaning,dl,data.get('english',''),data.get('_scenario',''))
+                            st.toast(f"✅「{word}」を単語帳に追加！"); st.rerun()
+        st.markdown('<div class="ep-tip">💡 <strong>チャンク読みのコツ：</strong>スラッシュで区切り、<strong>左から順番に</strong>意味をつかみながら読みましょう！</div>',unsafe_allow_html=True)
 
 
 # ============================================================
 # TAB 3: AUDIO
 # ============================================================
 with tab3:
-    if not data: st.markdown(ph("🔊 音読"), unsafe_allow_html=True)
+    if not data: st.markdown(ph("🔊 音読"),unsafe_allow_html=True)
     else:
-        dl, DC, DLS = get_dl_info(data)
-        st.markdown(f"""
-<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;
-     padding:18px;margin-bottom:14px;">
+        dl,DC,DLS=get_dl(data)
+        st.markdown(f"""<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;padding:18px;margin-bottom:14px;">
   <div class="ep-label" style="background:{DC['main']};">🎵 シャドーイング・音読プレイヤー</div>
-  <div style="background:white;border:1px solid {DC['border']};border-radius:12px;padding:14px;
-       margin-bottom:12px;font-size:16px;font-weight:600;color:#1e293b;line-height:1.8;">
-    {data.get('chunked','')}</div>
-  <div style="font-size:12px;color:#475569;padding:6px 10px;background:rgba(255,255,255,.6);
-       border-radius:8px;">🇯🇵 {data.get('english_jp','')}</div>
-</div>""", unsafe_allow_html=True)
-        st.components.v1.html(
-            gen_audio(data.get('english',''), DLS['tts'], DC['main'], 'epShad', True),
-            height=265)
-        st.markdown(f"""
-<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:16px;margin-top:14px;">
+  <div style="background:white;border:1px solid {DC['border']};border-radius:12px;padding:14px;margin-bottom:12px;font-size:16px;font-weight:600;color:#1e293b;line-height:1.8;">{data.get('chunked','')}</div>
+  <div style="font-size:12px;color:#475569;padding:6px 10px;background:rgba(255,255,255,.6);border-radius:8px;">🇯🇵 {data.get('english_jp','')}</div></div>""",unsafe_allow_html=True)
+        st.components.v1.html(gen_audio(data.get('english',''),DLS['tts'],DC['main'],'epShad',True),height=265)
+        st.markdown(f"""<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:16px;margin-top:14px;">
   <div style="font-size:12px;font-weight:800;color:#92400e;margin-bottom:10px;">💡 安河内式 音読 3ステップ</div>
   <div style="display:flex;flex-direction:column;gap:8px;">
-    <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#78350f;">
-      <span style="background:{DC['main']};color:white;width:20px;height:20px;border-radius:50%;
-            display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;flex-shrink:0;">1</span>
-      <span><strong>0.8x</strong> → 音声を聴きながら口をパクパク（オーバーラッピング）</span></div>
-    <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#78350f;">
-      <span style="background:{DC['main']};color:white;width:20px;height:20px;border-radius:50%;
-            display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;flex-shrink:0;">2</span>
-      <span><strong>1.0x</strong> → 声に出して一緒に読む（シャドーイング）</span></div>
-    <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#78350f;">
-      <span style="background:{DC['main']};color:white;width:20px;height:20px;border-radius:50%;
-            display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;flex-shrink:0;">3</span>
-      <span><strong>1.2x</strong> → スクリプトを見ずに追いかける（スピードトレーニング）</span></div>
-  </div>
-</div>""", unsafe_allow_html=True)
+    <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#78350f;"><span style="background:{DC['main']};color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;flex-shrink:0;">1</span><span><strong>0.8x</strong> → 音声を聴きながら口をパクパク（オーバーラッピング）</span></div>
+    <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#78350f;"><span style="background:{DC['main']};color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;flex-shrink:0;">2</span><span><strong>1.0x</strong> → 声に出して一緒に読む（シャドーイング）</span></div>
+    <div style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:#78350f;"><span style="background:{DC['main']};color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;flex-shrink:0;">3</span><span><strong>1.2x</strong> → スクリプトを見ずに追いかける（スピードトレーニング）</span></div>
+  </div></div>""",unsafe_allow_html=True)
 
 
 # ============================================================
 # TAB 4: PRONUNCIATION
 # ============================================================
 with tab4:
-    if not data: st.markdown(ph("🎤 発音"), unsafe_allow_html=True)
+    if not data: st.markdown(ph("🎤 発音"),unsafe_allow_html=True)
     else:
-        dl, DC, DLS = get_dl_info(data)
-        st.markdown(f"""
-<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;
-     padding:18px;margin-bottom:14px;">
+        dl,DC,DLS=get_dl(data)
+        st.markdown(f"""<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;padding:18px;margin-bottom:14px;">
   <div class="ep-label" style="background:{DC['main']};">🎤 発音チェック ({DLS['name']})</div>
-  <div style="font-size:15px;font-weight:600;color:#1e293b;line-height:1.7;margin-bottom:8px;">
-    {data.get('english','')}</div>
-  <div style="font-size:12px;color:#64748b;">🇯🇵 {data.get('english_jp','')}</div>
-</div>""", unsafe_allow_html=True)
-        st.markdown('<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:8px;">🔊 手本の発音を聴く</div>', unsafe_allow_html=True)
-        st.components.v1.html(gen_audio(data.get('english',''), DLS['tts'], DC['main'], 'epRef', True), height=265)
-        st.markdown("<hr style='margin:14px 0;'>", unsafe_allow_html=True)
-        st.markdown('<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:4px;">🎤 マイクで音読（iPhone・Android対応）</div>', unsafe_allow_html=True)
-        st.markdown('<div style="font-size:11px;color:#94a3b8;margin-bottom:8px;">同じ録音はAPIを再送信しません</div>', unsafe_allow_html=True)
-
-        audio_val = st.audio_input("マイクを押して録音")
+  <div style="font-size:15px;font-weight:600;color:#1e293b;line-height:1.7;margin-bottom:8px;">{data.get('english','')}</div>
+  <div style="font-size:12px;color:#64748b;">🇯🇵 {data.get('english_jp','')}</div></div>""",unsafe_allow_html=True)
+        st.markdown('<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:8px;">🔊 手本の発音を聴く</div>',unsafe_allow_html=True)
+        st.components.v1.html(gen_audio(data.get('english',''),DLS['tts'],DC['main'],'epRef',True),height=265)
+        st.markdown("<hr style='margin:14px 0;'>",unsafe_allow_html=True)
+        st.markdown('<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:4px;">🎤 マイクで音読（iPhone・Android対応）</div>',unsafe_allow_html=True)
+        audio_val=st.audio_input("マイクを押して録音")
         if audio_val and st.session_state.get("_client"):
-            audio_bytes  = audio_val.getvalue()
-            audio_hash   = compute_hash(audio_bytes)
-            pron_key     = f"{audio_hash}_{data.get('english','')}_{dl}"
-            rd = None
-
-            if pron_key == st.session_state.get("last_pronunciation_key",""):
-                rd = st.session_state.get("pronunciation_result")
-                st.markdown('<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;font-size:11px;color:#16a34a;margin-bottom:8px;">⚡ 保存済み発音評価を表示中（API節約）</div>', unsafe_allow_html=True)
+            audio_bytes=audio_val.getvalue(); audio_hash=compute_hash(audio_bytes)
+            pron_key=f"{audio_hash}_{data.get('english','')}_{dl}"; rd=None
+            if pron_key==st.session_state.get("last_pronunciation_key",""):
+                rd=st.session_state.get("pronunciation_result")
+                st.markdown('<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px;font-size:11px;color:#16a34a;margin-bottom:8px;">⚡ 保存済み発音評価を表示中（API節約）</div>',unsafe_allow_html=True)
             else:
                 with st.spinner("AIが発音を分析中... 🎯"):
-                    lang_name = "Deutschen" if dl=='de' else "英語"
-                    ap = f"""この音声を{lang_name}として文字起こしし、元の文「{data.get('english','')}」と比較して採点してください。
-JSONのみ出力:
-{{"score":85,"transcript":"認識テキスト","good_words":["正解単語"],"bad_words":["要練習単語"],"feedback":"フィードバック（日本語1文）"}}"""
+                    lang_name="Deutschen" if dl=='de' else "英語"
+                    ap=f"""この音声を{lang_name}として文字起こしし、元の文「{data.get('english','')}」と比較して採点してください。
+JSONのみ出力: {{"score":85,"transcript":"認識テキスト","good_words":["正解単語"],"bad_words":["要練習単語"],"feedback":"フィードバック（日本語1文）"}}"""
                     try:
-                        raw = call_audio(ap, audio_bytes, call_type="pronunciation")
-                        m = re.search(r'\{[\s\S]*\}', raw)
+                        raw=call_audio(ap,audio_bytes,call_type="pronunciation")
+                        m=re.search(r'\{[\s\S]*\}',raw)
                         if m:
-                            rd = json.loads(m.group())
-                            st.session_state["last_pronunciation_key"] = pron_key
-                            st.session_state["pronunciation_result"]   = rd
-                    except Exception as e:
-                        st.error(f"分析エラー: {e}")
-
+                            rd=json.loads(m.group()); st.session_state["last_pronunciation_key"]=pron_key; st.session_state["pronunciation_result"]=rd
+                    except Exception as e: st.error(f"分析エラー: {e}")
             if rd:
-                sc  = rd.get('score',0)
-                col = "#22c55e" if sc>=80 else "#eab308" if sc>=60 else "#ef4444"
-                ok_c = "".join([f'<span class="ep-chip-ok">{w}</span>' for w in rd.get('good_words',[])])
-                ng_c = "".join([f'<span class="ep-chip-ng">{w}</span>' for w in rd.get('bad_words',[])])
-                st.markdown(f"""
-<div class="ep-card" style="margin-top:14px;">
+                sc=rd.get('score',0); col="#22c55e" if sc>=80 else "#eab308" if sc>=60 else "#ef4444"
+                ok_c="".join([f'<span class="ep-chip-ok">{w}</span>' for w in rd.get('good_words',[])])
+                ng_c="".join([f'<span class="ep-chip-ng">{w}</span>' for w in rd.get('bad_words',[])])
+                st.markdown(f"""<div class="ep-card" style="margin-top:14px;">
   <div class="ep-score-box"><span style="font-size:13px;font-weight:800;color:#334155;">発音マッチ度</span>
     <span class="ep-score-num" style="color:{col};">{sc}%</span></div>
   <div class="ep-bar-wrap"><div class="ep-bar" style="width:{sc}%;background:{col};"></div></div>
   <div style="margin-bottom:10px;">{ok_c}{ng_c}</div>
   <div style="font-size:11px;color:#94a3b8;">認識テキスト: "{rd.get('transcript','')}"</div>
   {'<div style="font-size:12px;color:#475569;margin-top:8px;padding:8px;background:#f8fafc;border-radius:8px;">💬 ' + rd.get("feedback","") + '</div>' if rd.get('feedback') else ''}
-</div>""", unsafe_allow_html=True)
-                if sc>=80: st.markdown('<div class="ep-alert-g">🎉 素晴らしい！次のステップへ！</div>', unsafe_allow_html=True)
-                elif sc<60: st.markdown('<div class="ep-alert-o">💡 0.8xでゆっくり練習→チャンク単位で確認しましょう</div>', unsafe_allow_html=True)
+</div>""",unsafe_allow_html=True)
+                if sc>=80: st.markdown('<div class="ep-alert-g">🎉 素晴らしい！次のステップへ！</div>',unsafe_allow_html=True)
+                elif sc<60: st.markdown('<div class="ep-alert-o">💡 0.8xでゆっくり練習→チャンク単位で確認しましょう</div>',unsafe_allow_html=True)
 
 
 # ============================================================
 # TAB 5: PRACTICE
 # ============================================================
 with tab5:
-    if not data: st.markdown(ph("✏️ 穴埋め練習"), unsafe_allow_html=True)
+    if not data: st.markdown(ph("✏️ 穴埋め練習"),unsafe_allow_html=True)
     else:
-        dl, DC, DLS = get_dl_info(data)
+        dl,DC,DLS=get_dl(data)
         bq=data.get('blank_q',''); ba=data.get('blank_a',''); ht=data.get('hint','')
-        st.markdown(f"""
-<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;
-     padding:18px;margin-bottom:14px;">
+        st.markdown(f"""<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;padding:18px;margin-bottom:14px;">
   <div class="ep-label" style="background:{DC['main']};">✏️ 瞬発力トレーニング</div>
   <div style="font-size:11px;color:#94a3b8;margin-bottom:14px;">3秒以内に空欄の単語を思い出してください</div>
-  <div style="background:white;border:2px dashed #cbd5e1;border-radius:14px;
-       padding:18px;text-align:center;margin-bottom:14px;">
+  <div style="background:white;border:2px dashed #cbd5e1;border-radius:14px;padding:18px;text-align:center;margin-bottom:14px;">
     <div style="font-size:19px;font-weight:700;color:#1e293b;">{bq}</div>
-    <div style="font-size:12px;color:#94a3b8;margin-top:6px;">💡 {ht}</div>
-  </div>
-</div>""", unsafe_allow_html=True)
-        if st.button("⏱ 3秒カウントダウンスタート", use_container_width=True, key="timer_btn"):
-            ph_t = st.empty()
+    <div style="font-size:12px;color:#94a3b8;margin-top:6px;">💡 {ht}</div></div></div>""",unsafe_allow_html=True)
+        if st.button("⏱ 3秒カウントダウンスタート",use_container_width=True,key="timer_btn"):
+            ph_t=st.empty()
             for i in range(3,0,-1):
-                ph_t.markdown(f'<div style="text-align:center;font-size:84px;font-weight:900;color:{DC["main"]};padding:6px 0;">{i}</div>', unsafe_allow_html=True)
-                time.sleep(1)
-            ph_t.markdown('<div style="text-align:center;font-size:26px;font-weight:900;color:#f97316;">答えて！</div>', unsafe_allow_html=True)
-
-        user_ans = st.text_input("答えを入力", placeholder="単語を入力...", key="prac_ans")
-        c1,c2 = st.columns(2)
-        with c1: chk = st.button("✅ 答え合わせ", use_container_width=True, type="primary", key="chk_btn")
-        with c2: ply = st.button("🔊 正解の文を聴く", use_container_width=True, key="ply_btn")
+                ph_t.markdown(f'<div style="text-align:center;font-size:84px;font-weight:900;color:{DC["main"]};padding:6px 0;">{i}</div>',unsafe_allow_html=True); time.sleep(1)
+            ph_t.markdown('<div style="text-align:center;font-size:26px;font-weight:900;color:#f97316;">答えて！</div>',unsafe_allow_html=True)
+        user_ans=st.text_input("答えを入力",placeholder="単語を入力...",key="prac_ans")
+        c1,c2=st.columns(2)
+        with c1: chk=st.button("✅ 答え合わせ",use_container_width=True,type="primary",key="chk_btn")
+        with c2: ply=st.button("🔊 正解の文を聴く",use_container_width=True,key="ply_btn")
         if chk and user_ans:
-            ok = user_ans.lower().strip() == ba.lower().strip()
-            st.markdown(f"""
-<div style="background:white;border:1px solid #e2e8f0;border-radius:16px;padding:18px;
-     text-align:center;margin-top:10px;">
+            ok=user_ans.lower().strip()==ba.lower().strip()
+            st.markdown(f"""<div style="background:white;border:1px solid #e2e8f0;border-radius:16px;padding:18px;text-align:center;margin-top:10px;">
   <div style="font-size:11px;color:#94a3b8;margin-bottom:3px;">正解:</div>
   <div style="font-size:28px;font-weight:900;color:#22c55e;margin-bottom:8px;">{ba}</div>
-  <div style="color:{"#22c55e" if ok else "#f97316"};font-size:13px;">
-    {"🎉 正解！素晴らしい！" if ok else f"あなたの回答: <strong>{user_ans}</strong> → もう一度！"}</div>
-</div>""", unsafe_allow_html=True)
-        if ply: st.components.v1.html(gen_audio(data.get('english',''), DLS['tts'], DC['main'], 'epPrac', False), height=110)
-
-        if st.button("🔄 別の穴埋め問題を生成", key="regen_blank"):
+  <div style="color:{"#22c55e" if ok else "#f97316"};font-size:13px;">{"🎉 正解！素晴らしい！" if ok else f"あなたの回答: <strong>{user_ans}</strong> → もう一度！"}</div></div>""",unsafe_allow_html=True)
+        if ply: st.components.v1.html(gen_audio(data.get('english',''),DLS['tts'],DC['main'],'epPrac',False),height=110)
+        if st.button("🔄 別の穴埋め問題を生成",key="regen_blank"):
             if st.session_state.get("_client") and data.get('english'):
                 with st.spinner():
                     try:
-                        rp = f"""文「{data['english']}」から別の単語を空欄にした穴埋め問題を作ってください。
+                        rp=f"""文「{data['english']}」から別の単語を空欄にした穴埋め問題を作ってください。
 JSONのみ: {{"blank_q":"穴埋め文（___）","blank_a":"正解","hint":"ヒント（日本語）"}}"""
-                        raw = call_text(rp, call_type="blank_regenerate")
-                        m = re.search(r'\{[\s\S]*\}', raw)
-                        if m:
-                            st.session_state.script_data.update(json.loads(m.group())); st.rerun()
+                        raw=call_text(rp,call_type="blank_regenerate"); m=re.search(r'\{[\s\S]*\}',raw)
+                        if m: st.session_state.script_data.update(json.loads(m.group())); st.rerun()
                     except Exception as e: st.error(f"エラー: {e}")
-
         if data.get('paraphrases'):
             with st.expander("🆘 言い換えレスキュー"):
                 for p in data['paraphrases']:
-                    st.markdown(f'<div class="ep-para"><span class="ep-para-hard">{p.get("difficult","")}</span><span style="color:#94a3b8;">→</span><span class="ep-para-easy">{p.get("simple","")}</span><span class="ep-para-note">（{p.get("note","")}）</span></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="ep-para"><span class="ep-para-hard">{p.get("difficult","")}</span><span style="color:#94a3b8;">→</span><span class="ep-para-easy">{p.get("simple","")}</span><span class="ep-para-note">（{p.get("note","")}）</span></div>',unsafe_allow_html=True)
 
 
 # ============================================================
 # TAB 6: ROLEPLAY
 # ============================================================
 with tab6:
-    if not data: st.markdown(ph("🎭 ロールプレイ"), unsafe_allow_html=True)
+    if not data: st.markdown(ph("🎭 ロールプレイ"),unsafe_allow_html=True)
     else:
-        dl, DC, DLS = get_dl_info(data)
+        dl,DC,DLS=get_dl(data)
         if not st.session_state.chat_history:
-            opener = ("Hi! Let's practice together. What would you like to talk about?"
-                      if dl=='en' else
-                      "Hallo! Lass uns zusammen üben. Worüber möchtest du sprechen?")
-            st.session_state.chat_history = [{"role":"assistant","content":opener}]
-
-        chat_html = '<div class="ep-chat-wrap">'
+            opener=("Hi! Let's practice together. What would you like to talk about?" if dl=='en' else "Hallo! Lass uns zusammen üben. Worüber möchtest du sprechen?")
+            st.session_state.chat_history=[{"role":"assistant","content":opener}]
+        chat_html='<div class="ep-chat-wrap">'
         for msg in st.session_state.chat_history:
-            if msg["role"]=="user":
-                chat_html += f'<div class="ep-bubble-user" style="background:{DC["main"]};">{msg["content"]}</div>'
+            if msg["role"]=="user": chat_html+=f'<div class="ep-bubble-user" style="background:{DC["main"]};">{msg["content"]}</div>'
             else:
-                lbl = "💬 ネイティブ" if dl=='en' else "💬 Muttersprachler"
-                chat_html += f'<div class="ep-bubble-ai"><div class="ep-bubble-label">{lbl}</div>{msg["content"]}</div>'
-        chat_html += "</div>"
-        st.markdown(chat_html, unsafe_allow_html=True)
-
+                lbl="💬 ネイティブ" if dl=='en' else "💬 Muttersprachler"
+                chat_html+=f'<div class="ep-bubble-ai"><div class="ep-bubble-label">{lbl}</div>{msg["content"]}</div>'
+        chat_html+="</div>"
+        st.markdown(chat_html,unsafe_allow_html=True)
         if data.get('paraphrases'):
             with st.expander("🆘 言い換えレスキュー"):
                 for p in data['paraphrases']:
-                    st.markdown(f'<div class="ep-para"><span class="ep-para-hard">{p.get("difficult","")}</span><span>→</span><span class="ep-para-easy">{p.get("simple","")}</span></div>', unsafe_allow_html=True)
-
-        show_hint = st.checkbox("💡 AIの返答の日本語訳を表示", value=True, key="show_trans")
-        user_msg = st.chat_input(f"{DLS['name']}で返事を入力してください...")
+                    st.markdown(f'<div class="ep-para"><span class="ep-para-hard">{p.get("difficult","")}</span><span>→</span><span class="ep-para-easy">{p.get("simple","")}</span></div>',unsafe_allow_html=True)
+        show_hint=st.checkbox("💡 AIの返答の日本語訳を表示",value=True,key="show_trans")
+        user_msg=st.chat_input(f"{DLS['name']}で返事を入力してください...")
         if user_msg and st.session_state.get("_client"):
             st.session_state.chat_history.append({"role":"user","content":user_msg})
             with st.spinner("AIが返答中..."):
-                cp = (f"You are a friendly native {'English' if dl=='en' else 'German'} speaker helping someone practice {DLS['name']}. "
-                      f"Context: {data.get('english','')}. "
-                      f"Reply in {DLS['name']} (1-2 sentences)."
-                      f"{'After your reply, add (日本語訳) in parentheses.' if show_hint else ''} "
-                      f"User said: {user_msg}")
+                cp=(f"You are a friendly native {'English' if dl=='en' else 'German'} speaker helping someone practice {DLS['name']}. "
+                    f"Context: {data.get('english','')}. Reply in {DLS['name']} (1-2 sentences)."
+                    f"{'After your reply, add (日本語訳) in parentheses.' if show_hint else ''} User said: {user_msg}")
                 try:
-                    reply = call_text(cp, call_type="roleplay")
-                    st.session_state.chat_history.append({"role":"assistant","content":reply.strip()})
-                    st.rerun()
+                    reply=call_text(cp,call_type="roleplay"); st.session_state.chat_history.append({"role":"assistant","content":reply.strip()}); st.rerun()
                 except Exception as e: st.error(f"返答エラー: {e}")
-
-        c_r, c_d = st.columns([1,1])
+        c_r,c_d=st.columns([1,1])
         with c_r:
-            if st.button("🔄 会話リセット", key="reset_chat"):
-                st.session_state.chat_history=[]; st.rerun()
+            if st.button("🔄 会話リセット",key="reset_chat"): st.session_state.chat_history=[]; st.rerun()
         with c_d:
-            if st.button("📈 少し難しく話しかける", key="bump_diff"):
+            if st.button("📈 少し難しく話しかける",key="bump_diff"):
                 if st.session_state.get("_client"):
                     with st.spinner():
                         try:
-                            bp = (f"In {DLS['name']}, ask a challenging follow-up question "
-                                  f"using more advanced vocabulary. Context: {data.get('english','')}")
-                            reply = call_text(bp, call_type="roleplay_difficult")
-                            st.session_state.chat_history.append({"role":"assistant","content":reply.strip()})
-                            st.rerun()
+                            bp=f"In {DLS['name']}, ask a challenging follow-up using more advanced vocabulary. Context: {data.get('english','')}"
+                            reply=call_text(bp,call_type="roleplay_difficult"); st.session_state.chat_history.append({"role":"assistant","content":reply.strip()}); st.rerun()
                         except Exception as e: st.error(f"エラー: {e}")
 
 
@@ -971,54 +708,294 @@ with tab6:
 # TAB 7: マイ学習帳
 # ============================================================
 with tab7:
-    saved = st.session_state.saved_list
-    st.markdown(f"""
-<div style="background:linear-gradient(135deg,#1e293b,#334155);color:white;
-     padding:18px 22px;border-radius:16px;margin-bottom:16px;">
+    saved=st.session_state.saved_list
+    st.markdown(f"""<div style="background:linear-gradient(135deg,#1e293b,#334155);color:white;padding:18px 22px;border-radius:16px;margin-bottom:16px;">
   <div style="font-size:18px;font-weight:900;margin-bottom:4px;">📚 マイ学習帳</div>
   <div style="font-size:12px;opacity:.75;">保存したスクリプトをいつでも呼び出せます</div>
-  <div style="display:inline-block;background:rgba(255,255,255,.2);border-radius:20px;
-       padding:3px 12px;font-size:12px;font-weight:700;margin-top:8px;">{len(saved)} 件保存済み</div>
-</div>""", unsafe_allow_html=True)
+  <div style="display:inline-block;background:rgba(255,255,255,.2);border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;margin-top:8px;">{len(saved)} 件保存済み</div></div>""",unsafe_allow_html=True)
     if not saved:
-        st.markdown('<div class="ep-ph"><div class="ep-ph-icon">📭</div><div class="ep-ph-title">まだ保存されていません</div><div class="ep-ph-sub">「📖 スクリプト」タブの「📚 マイ学習帳に保存」から保存できます</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="ep-ph"><div class="ep-ph-icon">📭</div><div class="ep-ph-title">まだ保存されていません</div><div class="ep-ph-sub">「📖 スクリプト」タブの「📚 マイ学習帳に保存」から保存できます</div></div>',unsafe_allow_html=True)
     else:
-        exp = json.dumps([{"title":s["title"],"script":s["english"],"jp":s.get("english_jp",""),
-                           "level":s["level"],"lang":s.get("lang","en"),"saved_at":s["saved_at"]}
-                          for s in saved], ensure_ascii=False, indent=2)
-        st.download_button("⬇️ 学習リストをJSONでダウンロード", data=exp,
-                           file_name="pitch_saved.json", mime="application/json")
+        exp=json.dumps([{"title":s["title"],"script":s["english"],"jp":s.get("english_jp",""),"level":s["level"],"lang":s.get("lang","en"),"saved_at":s["saved_at"]} for s in saved],ensure_ascii=False,indent=2)
+        st.download_button("⬇️ 学習リストをJSONでダウンロード",data=exp,file_name="pitch_saved.json",mime="application/json")
         st.markdown("---")
         for item in reversed(saved):
-            il = item.get("lang","en"); IC = ac(il); ILS = LANG[il]
-            st.markdown(f"""
-<div class="save-card">
-  <div style="margin-bottom:8px;">
-    <span style="font-size:10px;background:{IC['light']};color:{IC['main']};
-          border-radius:12px;padding:2px 8px;font-weight:700;">
-      {ILS['flag']} {item.get('level','')[:10]}</span>
-    <span style="font-size:10px;color:#94a3b8;margin-left:8px;">📅 {item['saved_at']}</span>
-  </div>
+            il=item.get("lang","en"); IC=ac(il); ILS=LANG[il]
+            st.markdown(f"""<div class="save-card">
+  <div style="margin-bottom:8px;"><span style="font-size:10px;background:{IC['light']};color:{IC['main']};border-radius:12px;padding:2px 8px;font-weight:700;">{ILS['flag']} {item.get('level','')[:10]}</span>
+  <span style="font-size:10px;color:#94a3b8;margin-left:8px;">📅 {item['saved_at']}</span></div>
   <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:4px;">{item['english']}</div>
   <div style="font-size:12px;color:#64748b;margin-bottom:8px;">🇯🇵 {item.get('english_jp','')}</div>
-  <div style="font-size:11px;color:#94a3b8;">元の入力: {item.get('source_ja','')[:50]}…</div>
-</div>""", unsafe_allow_html=True)
-            cl, cd = st.columns([2,1])
+  <div style="font-size:11px;color:#94a3b8;">元の入力: {item.get('source_ja','')[:50]}…</div></div>""",unsafe_allow_html=True)
+            cl,cd=st.columns([2,1])
             with cl:
-                if st.button("📂 この内容で学習再開", key=f"load_{item['id']}", use_container_width=True):
-                    st.session_state.script_data = item["data"]
-                    st.session_state.chat_history = []
-                    st.success("✅ 読み込みました！「📖 スクリプト」タブを確認してください。")
+                if st.button("📂 この内容で学習再開",key=f"load_{item['id']}",use_container_width=True):
+                    st.session_state.script_data=item["data"]; st.session_state.chat_history=[]; st.success("✅ 読み込みました！「📖 スクリプト」タブを確認してください。")
             with cd:
-                if st.button("🗑️ 削除", key=f"del_{item['id']}", use_container_width=True):
-                    st.session_state.saved_list = [s for s in saved if s["id"]!=item["id"]]
-                    st.rerun()
+                if st.button("🗑️ 削除",key=f"del_{item['id']}",use_container_width=True):
+                    st.session_state.saved_list=[s for s in saved if s["id"]!=item["id"]]; st.rerun()
 
 
-# ── 重要語彙カード（画面下部・st.components.v1.html → 確実に発音動作）
+# ============================================================
+# TAB 8: 📔 スマート単語帳
+# ============================================================
+with tab8:
+    wb=st.session_state.get("word_book",[])
+    today_str=date.today().isoformat()
+
+    # ── ダッシュボード
+    total_w=len(wb); s0=sum(1 for w in wb if w.get('status',0)==0)
+    s1=sum(1 for w in wb if w.get('status',0)==1); s2=sum(1 for w in wb if w.get('status',0)==2)
+    due_w=sum(1 for w in wb if w.get('next_review',today_str)<=today_str and w.get('status',0)<2)
+    st.markdown(f"""<div style="background:linear-gradient(135deg,#0f172a,#1e293b);color:white;padding:18px 22px;border-radius:16px;margin-bottom:14px;">
+  <div style="font-size:18px;font-weight:900;margin-bottom:10px;">📔 スマート単語帳</div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:10px 16px;text-align:center;flex:1;">
+      <div style="font-size:22px;font-weight:900;color:white;">{total_w}</div><div style="font-size:10px;opacity:.7;">総登録数</div></div>
+    <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:10px 16px;text-align:center;flex:1;">
+      <div style="font-size:22px;font-weight:900;color:#94a3b8;">{s0}</div><div style="font-size:10px;opacity:.7;">⬜ 未学習</div></div>
+    <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:10px 16px;text-align:center;flex:1;">
+      <div style="font-size:22px;font-weight:900;color:#93c5fd;">{s1}</div><div style="font-size:10px;opacity:.7;">🔵 学習中</div></div>
+    <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:10px 16px;text-align:center;flex:1;">
+      <div style="font-size:22px;font-weight:900;color:#86efac;">{s2}</div><div style="font-size:10px;opacity:.7;">⭐ 習得</div></div>
+    <div style="background:rgba(251,191,36,.2);border:1px solid rgba(251,191,36,.4);border-radius:12px;padding:10px 16px;text-align:center;flex:1;">
+      <div style="font-size:22px;font-weight:900;color:#fbbf24;">{due_w}</div><div style="font-size:10px;opacity:.7;">📅 今日の復習</div></div>
+  </div></div>""",unsafe_allow_html=True)
+
+    if not wb:
+        st.markdown('<div class="ep-ph"><div class="ep-ph-icon">📭</div><div class="ep-ph-title">単語帳が空です</div><div class="ep-ph-sub">「📖 スクリプト」タブの語彙カード下にある 📌 ボタンから単語を追加してください</div></div>',unsafe_allow_html=True)
+    else:
+        # ── ビュー選択
+        view=st.radio("",["📋 単語リスト","🎯 クイズ","💾 保存/読込"],horizontal=True,key="wb_view",label_visibility="collapsed")
+
+        # ===== 単語リスト =====
+        if view=="📋 単語リスト":
+            c_lf,c_sf=st.columns([1,1])
+            with c_lf:
+                lf=st.radio("言語",["すべて","🇺🇸 En","🇩🇪 De"],horizontal=True,key="wb_lf",label_visibility="collapsed")
+            with c_sf:
+                sf=st.radio("ステータス",["すべて","⬜","🔵","⭐"],horizontal=True,key="wb_sf",label_visibility="collapsed")
+            filtered=wb
+            if lf=="🇺🇸 En": filtered=[w for w in filtered if w['lang']=='en']
+            elif lf=="🇩🇪 De": filtered=[w for w in filtered if w['lang']=='de']
+            if sf=="⬜": filtered=[w for w in filtered if w.get('status',0)==0]
+            elif sf=="🔵": filtered=[w for w in filtered if w.get('status',0)==1]
+            elif sf=="⭐": filtered=[w for w in filtered if w.get('status',0)==2]
+            st.markdown(f'<div style="font-size:11px;color:#94a3b8;margin-bottom:10px;">{len(filtered)} 語表示中</div>',unsafe_allow_html=True)
+            for w in reversed(filtered):
+                wl=LANG.get(w.get('lang','en'),LANG['en']); wC=ac(w.get('lang','en'))
+                st_icon,st_label,st_cls=STATUS_LABELS.get(w.get('status',0),STATUS_LABELS[0])
+                due_today=w.get('next_review',today_str)<=today_str and w.get('status',0)<2
+                due_badge='<span style="background:#fef3c7;color:#d97706;border-radius:20px;padding:2px 8px;font-size:10px;font-weight:700;margin-left:6px;">📅 復習日</span>' if due_today else ""
+
+                # 単語カード（複雑なf-stringを分離して記述）
+                ex_html = (f'<div style="font-size:12px;background:#f0f9ff;border-radius:8px;'
+                           f'padding:8px;margin-bottom:6px;color:#0369a1;">'
+                           f'<strong>例文:</strong> {w["example"]}<br>'
+                           f'<span style="color:#475569;">🇯🇵 {w["example_jp"]}</span></div>'
+                           ) if w.get('example') else ""
+                syn_html = (f'<div style="font-size:11px;color:#64748b;margin-bottom:4px;">'
+                            f'類義語: {", ".join(w["synonyms"])}</div>'
+                            ) if w.get('synonyms') else ""
+                use_html = (f'<div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">'
+                            f'💡 {w["usage_note"]}</div>'
+                            ) if w.get('usage_note') else ""
+                st.markdown(
+                    f'<div class="word-card">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">'
+                    f'<div><span style="font-size:18px;font-weight:900;color:{wC["main"]};">{w["word"]}</span>'
+                    f'<span style="font-size:10px;color:#94a3b8;margin-left:8px;">{wl["flag"]}</span>{due_badge}</div>'
+                    f'<span class="{st_cls}">{st_icon} {st_label}</span></div>'
+                    f'<div style="font-size:13px;color:#475569;margin-bottom:6px;">🇯🇵 {w["meaning"]}</div>'
+                    + ex_html + syn_html + use_html +
+                    f'<div style="font-size:10px;color:#94a3b8;">'
+                    f'正解: {w.get("correct_count",0)}回 ／ 次回復習: {w.get("next_review",today_str)}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True)
+                col_s0,col_s1,col_s2,col_ex,col_del=st.columns([1,1,1,2,1])
+                with col_s0:
+                    if st.button("⬜",key=f"s0_{w['id']}",use_container_width=True,help="未学習"):
+                        for i,ww in enumerate(st.session_state.word_book):
+                            if ww['id']==w['id']:
+                                st.session_state.word_book[i]['status']=0
+                                st.session_state.word_book[i]['correct_count']=0; break
+                        st.rerun()
+                with col_s1:
+                    if st.button("🔵",key=f"s1_{w['id']}",use_container_width=True,help="学習中"):
+                        for i,ww in enumerate(st.session_state.word_book):
+                            if ww['id']==w['id']: st.session_state.word_book[i]['status']=1; break
+                        st.rerun()
+                with col_s2:
+                    if st.button("⭐",key=f"s2_{w['id']}",use_container_width=True,help="習得"):
+                        for i,ww in enumerate(st.session_state.word_book):
+                            if ww['id']==w['id']:
+                                st.session_state.word_book[i]['status']=2
+                                st.session_state.word_book[i]['next_review']=(date.today()+timedelta(days=30)).isoformat(); break
+                        st.rerun()
+                with col_ex:
+                    if not w.get('example'):
+                        if st.button("✨ 例文を生成",key=f"ex_{w['id']}",use_container_width=True):
+                            if st.session_state.get("_client"):
+                                with st.spinner(f"「{w['word']}」の例文を生成中..."):
+                                    result=generate_word_example(w['word'],w['meaning'],w.get('lang','en'),w.get('scenario',''))
+                                    if result:
+                                        for i,ww in enumerate(st.session_state.word_book):
+                                            if ww['id']==w['id']: st.session_state.word_book[i].update(result); break
+                                        st.rerun()
+                    else:
+                        if st.button("🔊 例文を聴く",key=f"pl_{w['id']}",use_container_width=True):
+                            tts_l=LANG.get(w.get('lang','en'),LANG['en'])['tts']
+                            st.components.v1.html(gen_audio(w['example'],tts_l,wC['main'],f"ep_{w['id']}",False),height=110)
+                with col_del:
+                    if st.button("🗑️",key=f"del_w_{w['id']}",use_container_width=True):
+                        st.session_state.word_book=[ww for ww in st.session_state.word_book if ww['id']!=w['id']]; st.rerun()
+
+        # ===== クイズ =====
+        elif view=="🎯 クイズ":
+            qs=st.session_state.get("quiz_state")
+            if not qs:
+                quiz_mode=st.radio("クイズモード",["💭 意味を当てる","✏️ 単語を当てる","📝 穴埋め","🔊 リスニング"],horizontal=True,key="quiz_mode_sel")
+                quiz_scope=st.radio("対象",["📚 すべて","📅 今日の復習のみ"],horizontal=True,key="quiz_scope")
+                q_lang=st.radio("言語",["すべて","🇺🇸 English","🇩🇪 Deutsch"],horizontal=True,key="quiz_lang")
+                cand=wb[:]
+                if q_lang=="🇺🇸 English": cand=[w for w in cand if w['lang']=='en']
+                elif q_lang=="🇩🇪 Deutsch": cand=[w for w in cand if w['lang']=='de']
+                if quiz_scope=="📅 今日の復習のみ":
+                    cand=[w for w in cand if w.get('next_review',today_str)<=today_str and w.get('status',0)<2]
+                if quiz_mode=="📝 穴埋め":
+                    cand=[w for w in cand if w.get('example')]
+                    if not cand:
+                        st.markdown('<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;padding:14px;font-size:13px;color:#0369a1;">📝 穴埋めクイズには例文が必要です。「📋 単語リスト」で「✨ 例文を生成」を先に実行してください。</div>',unsafe_allow_html=True)
+                if cand:
+                    st.markdown(f'<div style="font-size:13px;color:#64748b;margin-bottom:14px;">対象: <strong>{len(cand)}語</strong></div>',unsafe_allow_html=True)
+                    if st.button("🎯 クイズ開始！",type="primary",use_container_width=True,key="quiz_start"):
+                        qw=cand[:]; random.shuffle(qw)
+                        st.session_state.quiz_state={"mode":quiz_mode,"words":qw,"index":0,
+                            "answered":False,"is_correct":None,
+                            "score":{"correct":0,"total":0},"finished":False}
+                        st.rerun()
+                else:
+                    if quiz_mode!="📝 穴埋め": st.info("対象となる単語がありません。")
+            else:
+                if qs.get("finished"):
+                    sc=qs['score']; pct=round(sc['correct']/max(sc['total'],1)*100)
+                    col_r="#22c55e" if pct>=80 else "#eab308" if pct>=60 else "#ef4444"
+                    st.markdown(
+                        f'<div style="background:white;border:1px solid #e2e8f0;border-radius:16px;'
+                        f'padding:24px;text-align:center;">'
+                        f'<div style="font-size:48px;margin-bottom:12px;">{"🎉" if pct>=80 else "💪"}</div>'
+                        f'<div style="font-size:14px;color:#64748b;margin-bottom:8px;">クイズ終了！</div>'
+                        f'<div style="font-size:48px;font-weight:900;color:{col_r};">{pct}%</div>'
+                        f'<div style="font-size:13px;color:#64748b;margin-top:8px;">{sc["correct"]} / {sc["total"]} 正解</div>'
+                        f'<div style="font-size:12px;color:#94a3b8;margin-top:12px;">SRS: 正解した単語は次回の復習日が自動更新されました</div>'
+                        f'</div>',unsafe_allow_html=True)
+                    if st.button("🔄 もう一度",use_container_width=True,key="quiz_retry"):
+                        st.session_state.quiz_state=None; st.rerun()
+                else:
+                    idx=qs['index']; words=qs['words']
+                    if idx>=len(words): qs['finished']=True; st.session_state.quiz_state=qs; st.rerun()
+                    w=words[idx]; wl=LANG.get(w.get('lang','en'),LANG['en']); wC=ac(w.get('lang','en'))
+                    prog=f"{idx+1} / {len(words)}"; sc=qs['score']
+                    st.markdown(
+                        f'<div style="background:{wC["light"]};border:1px solid {wC["border"]};'
+                        f'border-radius:14px;padding:16px;margin-bottom:14px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+                        f'<span style="font-size:12px;font-weight:700;color:{wC["main"]};">{qs["mode"]}</span>'
+                        f'<span style="font-size:12px;color:#64748b;">{prog} ｜ ✅{sc["correct"]} ❌{sc["total"]-sc["correct"]}</span>'
+                        f'</div>',unsafe_allow_html=True)
+
+                    mode=qs['mode']
+                    if mode=="💭 意味を当てる":
+                        st.markdown(f'<div style="font-size:36px;font-weight:900;color:{wC["main"]};text-align:center;padding:16px;">{w["word"]}</div>',unsafe_allow_html=True)
+                        st.components.v1.html(render_listen_html(w['word'],wl['tts_bcp'],wC['main']),height=110)
+                        correct_ans=w['meaning']
+                    elif mode=="✏️ 単語を当てる":
+                        st.markdown(f'<div style="font-size:22px;font-weight:700;color:#1e293b;text-align:center;padding:20px;">🇯🇵 {w["meaning"]}</div>',unsafe_allow_html=True)
+                        correct_ans=w['word']
+                    elif mode=="📝 穴埋め":
+                        ex=w.get('example',''); blank_ex=ex.replace(w['word'],'___',1)
+                        st.markdown(
+                            f'<div style="font-size:16px;font-weight:600;color:#1e293b;background:white;'
+                            f'border-radius:12px;padding:16px;text-align:center;">{blank_ex}</div>'
+                            f'<div style="font-size:11px;color:#94a3b8;text-align:center;margin-top:6px;">🇯🇵 {w.get("example_jp","")}</div>',
+                            unsafe_allow_html=True)
+                        correct_ans=w['word']
+                    else:  # リスニング
+                        st.components.v1.html(render_listen_html(w['word'],wl['tts_bcp'],wC['main']),height=110)
+                        correct_ans=w['word']
+
+                    st.markdown("</div>",unsafe_allow_html=True)
+
+                    if not qs.get('answered'):
+                        ans=st.text_input("答えを入力してください",key=f"qans_{idx}",placeholder="ここに入力...")
+                        if st.button("✅ 回答する",type="primary",use_container_width=True,key=f"qsubmit_{idx}"):
+                            is_correct=ans.lower().strip()==correct_ans.lower().strip()
+                            qs['answered']=True; qs['is_correct']=is_correct
+                            qs['score']['total']+=1
+                            if is_correct: qs['score']['correct']+=1
+                            update_word_status(w['id'],is_correct)
+                            st.session_state.quiz_state=qs; st.rerun()
+                    else:
+                        if qs['is_correct']:
+                            st.markdown(f'<div class="ep-alert-g">🎉 正解！<br><strong style="font-size:18px;">{correct_ans}</strong></div>',unsafe_allow_html=True)
+                        else:
+                            st.markdown(
+                                f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;'
+                                f'padding:14px;text-align:center;">'
+                                f'<div style="color:#dc2626;font-weight:700;">❌ 不正解</div>'
+                                f'<div style="font-size:18px;font-weight:900;color:#22c55e;margin-top:6px;">{correct_ans}</div>'
+                                f'</div>',unsafe_allow_html=True)
+                        if st.button("次へ →",use_container_width=True,type="primary",key=f"qnext_{idx}"):
+                            qs['index']+=1; qs['answered']=False; qs['is_correct']=None
+                            if qs['index']>=len(qs['words']): qs['finished']=True
+                            st.session_state.quiz_state=qs; st.rerun()
+                if st.button("⏹ クイズを終了",key="quiz_stop"):
+                    st.session_state.quiz_state=None; st.rerun()
+
+        # ===== 保存/読込 =====
+        else:
+            st.markdown("### 💾 単語帳の保存・読込")
+            st.info("📌 単語帳データはブラウザセッション中のみ保持されます。ページを閉じる前にエクスポートしてください。")
+            export_data=json.dumps(st.session_state.word_book,ensure_ascii=False,indent=2)
+            st.download_button("⬇️ 単語帳をJSONでエクスポート",data=export_data,
+                file_name=f"word_book_{date.today().isoformat()}.json",mime="application/json",use_container_width=True)
+            st.markdown("---")
+            st.markdown("#### ⬆️ JSONをインポート（既存データに追加）")
+            uploaded=st.file_uploader("単語帳JSONファイルを選択",type=["json"],key="wb_upload")
+            if uploaded:
+                try:
+                    import_data=json.loads(uploaded.read()); new_count=0
+                    for item in import_data:
+                        if isinstance(item,dict) and 'word' in item and 'meaning' in item:
+                            if not any(w['word'].lower()==item['word'].lower() and w['lang']==item.get('lang','en') for w in st.session_state.word_book):
+                                if 'id' not in item: item['id']=str(uuid.uuid4())[:8]
+                                st.session_state.word_book.append(item); new_count+=1
+                    st.success(f"✅ {new_count}語をインポートしました！（重複は除外）"); st.rerun()
+                except Exception as e: st.error(f"インポートエラー: {e}")
+            st.markdown("---")
+            if wb:
+                if st.button("🗑️ 単語帳をすべて削除",key="wb_clear_all"):
+                    st.session_state.word_book=[]; st.rerun()
+
+
+# ── 画面下部：語彙カード + 📌追加ボタン ──────────────────────
 if data and data.get('vocab'):
-    dl, DC, DLS = get_dl_info(data)
-    tts_bcp = DLS['tts_bcp']
-    vocab_html = render_vocab_html(data['vocab'], tts_bcp, DC, DLS, show_header=True)
-    height = max(120, len(data['vocab']) * 72 + 60)
-    st.components.v1.html(vocab_html, height=height, scrolling=False)
+    dl,DC,DLS=get_dl(data); tts_bcp=DLS['tts_bcp']; vocab_items=list(data['vocab'].items())
+    st.markdown(
+        f'<div style="background:white;border:1px solid #e2e8f0;border-radius:16px;'
+        f'padding:14px 14px 8px;margin-top:20px;">'
+        f'<div style="font-size:11px;font-weight:700;color:#94a3b8;margin-bottom:8px;">'
+        f'{DLS["flag"]} 📝 スクリプトの重要語彙（タップで発音）</div></div>',
+        unsafe_allow_html=True)
+    vocab_html=render_vocab_html(data['vocab'],tts_bcp,DC,DLS,show_header=False)
+    st.components.v1.html(vocab_html,height=max(80,len(vocab_items)*72+20),scrolling=False)
+    n=min(len(vocab_items),4); cols=st.columns(n)
+    for i,(word,meaning) in enumerate(vocab_items):
+        with cols[i%n]:
+            in_book=any(w['word'].lower()==word.lower() and w['lang']==dl for w in st.session_state.get('word_book',[]))
+            if in_book:
+                st.markdown(f'<div style="text-align:center;font-size:11px;color:#16a34a;padding:4px;">✅ 登録済み<br><strong>{word}</strong></div>',unsafe_allow_html=True)
+            else:
+                if st.button(f"📌 {word}",key=f"add_bot_{word}_{i}",use_container_width=True):
+                    add_to_wordbook(word,meaning,dl,data.get('english',''),data.get('_scenario',''))
+                    st.toast(f"✅「{word}」を単語帳に追加！"); st.rerun()
