@@ -753,8 +753,8 @@ with tab7:
                     target_lang = "英語" if lang == 'en' else "ドイツ語"
                     
                     import google.generativeai as genai
-                    # モデル名を gemini-2.5-flash に修正
-                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    # モデル名を gemini-3.6-flash に修正
+                    model = genai.GenerativeModel("gemini-3.6-flash")
                     
                     prompt = f"""
                     この画像に含まれる{target_lang}の単語を抽出し、以下のJSON形式の配列でのみ出力してください。
