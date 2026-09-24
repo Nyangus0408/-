@@ -718,7 +718,8 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        interval = st.slider("次の単語までの間隔（秒）", min_value=2.0, max_value=10.0, value=5.0, step=0.5)
+        # スライダー最小値を 2.0秒、デフォルトを 3.0秒 に設定
+        interval = st.slider("次の単語までの間隔（秒）", min_value=2.0, max_value=10.0, value=3.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
         btn_color = C["main"]
@@ -745,7 +746,7 @@ with tab8:
             let index = 0;
             let timerId = null;
             let timeoutId = null;
-            let currentUtterance = null; // GC（自動メモリ破棄）対策用の保持変数
+            let currentUtterance = null; // ガベージコレクション（自動削除）対策
 
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
@@ -755,11 +756,10 @@ with tab8:
             function speakText(text) {{
                 if (!text) return;
                 
-                // 音声合成エンジンのフリーズ対策
                 if (window.speechSynthesis.paused) {{
                     window.speechSynthesis.resume();
                 }}
-                window.speechSynthesis.cancel(); // 発音直前にリセット
+                window.speechSynthesis.cancel();
 
                 currentUtterance = new SpeechSynthesisUtterance(text);
                 currentUtterance.lang = langCode;
@@ -772,6 +772,7 @@ with tab8:
             }}
 
             function speakAndDisplay() {{
+                // 次の単語に進む際、前の単語の待機タイマーをクリア
                 clearTimeout(timeoutId);
 
                 if (index >= vocab.length) {{ index = 0; }}
@@ -791,7 +792,7 @@ with tab8:
             }}
 
             startBtn.addEventListener('click', () => {{
-                // ブラウザの音声自動再生ブロック解除用
+                // 音声自動再生のブロック解除用
                 const unlockAudio = new SpeechSynthesisUtterance('');
                 window.speechSynthesis.speak(unlockAudio);
                 
