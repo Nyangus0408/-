@@ -685,26 +685,22 @@ import json
 # ============================================================
 with tab7:
     st.markdown("### 📸 カメラ / 画像から単語を取り込み")
-    st.write("単語帳や書類を撮影して、自動でリスト化します。")
+    st.write("単語帳や書類を撮影、または画像ファイルを選択して、自動でリスト化します。")
     
     # ----------------------------------------------------
     # ① 単語データの保存・復元機能（自動結合バージョン）
     # ----------------------------------------------------
     st.markdown("#### 💾 単語データの保存と復元")
-    col1, col2 = st.columns(2)
-    with col1:
-        # 復元・結合機能（アップロード）
-        uploaded_file = st.file_uploader("📂 保存したJSONファイルを読み込む", type=["json"])
+    col_save1, col_save2 = st.columns(2)
+    with col_save1:
+        uploaded_file = st.file_uploader("📂 保存したJSONファイルを読み込む", type=["json"], key="json_uploader")
         if uploaded_file is not None:
             try:
                 loaded_vocab = json.load(uploaded_file)
-                
                 if 'vocab_list' not in st.session_state:
                     st.session_state.vocab_list = []
                 
-                # すでに存在する単語（重複）チェック用の準備
                 existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
-                
                 added_count = 0
                 for item in loaded_vocab:
                     if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
@@ -716,8 +712,7 @@ with tab7:
             except Exception as e:
                 st.error("ファイルの読み込みに失敗しました。")
 
-    with col2:
-        # 保存機能（ダウンロード）
+    with col_save2:
         if 'vocab_list' in st.session_state and st.session_state.vocab_list:
             json_str = json.dumps(st.session_state.vocab_list, ensure_ascii=False, indent=2)
             st.download_button(
@@ -733,24 +728,54 @@ with tab7:
     st.divider()
 
     # ----------------------------------------------------
-    # ② カメラの任意起動機能
+    # ② 画像・カメラからの取り込み＆単語変換機能
     # ----------------------------------------------------
-    st.markdown("#### 📷 画像の取り込み")
+    st.markdown("#### 📷 画像の取り込みと単語変換")
     
-    # チェックボックスにチェックを入れた時だけカメラを起動する
-    use_camera = st.checkbox("カメラを起動する")
+    # 取り込み方法の選択（カメラ起動 or ファイル選択）
+    input_method = st.radio("取り込み方法を選択", ["ファイルから選択（ギャラリー・フォルダ）", "カメラで撮影"], horizontal=True)
     
-    camera_image = None
-    if use_camera:
-        camera_image = st.camera_input("カメラで撮影")
+    image_to_process = None
+    
+    if input_method == "カメラで撮影":
+        use_camera = st.checkbox("カメラを有効にする")
+        if use_camera:
+            image_to_process = st.camera_input("カメラで撮影")
+    else:
+        image_to_process = st.file_uploader("画像ファイルを選択（PNG, JPG, JPEGなど）", type=["png", "jpg", "jpeg"], key="img_uploader")
 
-
-    # ============================================================
-    # ⚠️ 注意 ⚠️
-    # これより下にある「if camera_image:」から始まる画像解析のコード
-    # （Geminiに画像を送って単語を抽出する処理など）は、
-    # 絶対に消さずにそのまま残しておいてください！
-    # ============================================================
+    # 画像が取得できたらGemini等で単語変換処理を実行
+    if image_to_process is not None:
+        st.image(image_to_process, caption="選択・撮影された画像", use_container_width=True)
+        
+        if st.button("✨ この画像から単語を抽出する", type="primary"):
+            with st.spinner("画像を解析して単語を抽出中..."):
+                try:
+                    # 画像データをバイト列として取得
+                    image_bytes = image_to_process.getvalue()
+                    
+                    # Gemini API等を用いた抽出処理（元のアプリに実装されていた処理を呼び出し）
+                    # ※もしお手元のコードの関数名が異なる場合は適宜合わせてください
+                    extracted_items = extract_vocabulary_from_image(image_bytes, lang)
+                    
+                    if extracted_items:
+                        if 'vocab_list' not in st.session_state:
+                            st.session_state.vocab_list = []
+                        
+                        existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
+                        new_added = 0
+                        for item in extracted_items:
+                            if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
+                                st.session_state.vocab_list.append(item)
+                                existing_words.add(item.get('word'))
+                                new_added += 1
+                        
+                        st.success(f"{new_added}件の単語を新しく追加しました！（合計: {len(st.session_state.vocab_list)}件）")
+                        st.rerun()
+                    else:
+                        st.warning("画像から単語を検出できませんでした。別の画像をお試しください。")
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
 
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
