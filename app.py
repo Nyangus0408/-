@@ -805,54 +805,159 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        # スライダーで「単語表示から訳・音声が出るまでの待機時間」を設定
-        interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=2.0, max_value=10.0, value=3.0, step=0.5)
+        # ご要望通り：最小1秒、最大4秒、デフォルト2秒に変更
+        interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
         btn_color = C["main"]
         
         html_code = f"""
-        <div style="text-align: center; font-family: sans-serif; padding: 20px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
-            <div style="margin-bottom: 20px;">
-                <button id="startBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: {btn_color}; border: none; border-radius: 12px; margin-right: 10px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
-                    ▶ 再開 / スタート
+        <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
+            
+            <!-- コントロールボタン群 -->
+            <div style="text-align: center; margin-bottom: 15px; display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;">
+                <button id="startBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: {btn_color}; border: none; border-radius: 8px; cursor: pointer;">
+                    ▶ スタート
                 </button>
-                <button id="stopBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #ef4444; border: none; border-radius: 12px; margin-right: 10px; cursor: pointer; display: none; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
+                <button id="stopBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: #ef4444; border: none; border-radius: 8px; cursor: pointer; display: none;">
                     ■ 停止
                 </button>
-                <button id="resetBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #64748b; border: none; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
+                <button id="resetBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: #64748b; border: none; border-radius: 8px; cursor: pointer;">
                     🔄 最初から
+                </button>
+                <button id="shuffleBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: #1e293b; background-color: #f8fafc; border: none; border-radius: 8px; cursor: pointer;">
+                    🔀 シャッフル: OFF
                 </button>
             </div>
             
-            <div style="min-height: 160px; display: flex; flex-direction: column; justify-content: center; background: #0f172a; border-radius: 12px; padding: 20px; border: 1px solid #334155;">
-                <div id="wordText" style="font-size: 38px; font-weight: 900; color: #ffffff; margin-bottom: 12px;">Ready...</div>
-                <div id="meaningText" style="font-size: 20px; font-weight: 700; color: {btn_color};">ボタンを押して開始</div>
+            <!-- フラッシュカード表示エリア -->
+            <div style="text-align: center; min-height: 140px; display: flex; flex-direction: column; justify-content: center; background: #0f172a; border-radius: 12px; padding: 20px; border: 1px solid #334155; margin-bottom: 20px;">
+                <div id="wordText" style="font-size: 34px; font-weight: 900; color: #ffffff; margin-bottom: 8px;">Ready...</div>
+                <div id="meaningText" style="font-size: 20px; font-weight: 700; color: {btn_color};">リストの単語を押すとそこから始まります</div>
+            </div>
+
+            <!-- 単語リスト表示エリア -->
+            <div style="font-size: 14px; font-weight: bold; color: #cbd5e1; margin-bottom: 8px;">📋 単語リスト（クリックで再生開始）</div>
+            <div id="vocabList" style="height: 250px; overflow-y: auto; background-color: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 5px;">
+                <!-- ここにリストが自動生成されます -->
             </div>
         </div>
+
+        <style>
+            .list-item {{
+                padding: 12px; 
+                border-bottom: 1px solid #1e293b; 
+                color: #cbd5e1; 
+                cursor: pointer; 
+                border-radius: 6px;
+                transition: background 0.2s;
+            }}
+            .list-item:hover {{
+                background-color: #1e293b;
+            }}
+            .list-item.active {{
+                background-color: {btn_color};
+                color: white;
+            }}
+            /* スクロールバーの装飾 */
+            #vocabList::-webkit-scrollbar {{ width: 8px; }}
+            #vocabList::-webkit-scrollbar-thumb {{ background: #475569; border-radius: 4px; }}
+        </style>
 
         <script>
             const vocab = {vocab_json};
             const waitBeforeAnswerMs = {int(interval * 1000)};
-            const waitAfterAnswerMs = 2500; // 次の単語へ進むまでの時間
+            const waitAfterAnswerMs = 2500;
             const langCode = "{lang_code}";
-            let index = 0; // 単語の順番を保持する変数
+            
+            let playOrder = vocab.map((_, i) => i);
+            let index = 0; 
             let isPlaying = false;
+            let isShuffle = false;
+            let interrupt = false; // 再生中の割り込みフラグ
             let currentUtterance = null;
 
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
             const resetBtn = document.getElementById('resetBtn');
+            const shuffleBtn = document.getElementById('shuffleBtn');
             const wordText = document.getElementById('wordText');
             const meaningText = document.getElementById('meaningText');
+            const vocabListDiv = document.getElementById('vocabList');
 
-            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+            // --- 学習アイデア1: リスト生成とクリック再生 ---
+            function renderList() {{
+                vocabListDiv.innerHTML = '';
+                vocab.forEach((item, originalIdx) => {{
+                    const div = document.createElement('div');
+                    div.className = 'list-item';
+                    div.id = 'item-' + originalIdx;
+                    div.innerHTML = `<strong>${{originalIdx + 1}}. ${{item.word}}</strong> <span style="font-size:0.9em; opacity:0.8; margin-left:8px;">${{item.meaning}}</span>`;
+                    
+                    div.onclick = () => {{
+                        // クリックした単語の再生順序上の位置を探す
+                        let pIdx = playOrder.indexOf(originalIdx);
+                        if (pIdx !== -1) {{
+                            index = pIdx;
+                            interrupt = true; // 現在の待機ループを強制スキップ
+                            window.speechSynthesis.cancel();
+                            if (!isPlaying) {{
+                                startBtn.click();
+                            }}
+                        }}
+                    }};
+                    vocabListDiv.appendChild(div);
+                }});
+            }}
+            renderList();
+
+            // 再生中の単語をハイライト＆自動スクロール
+            function updateHighlight(originalIdx) {{
+                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
+                const activeEl = document.getElementById('item-' + originalIdx);
+                if (activeEl) {{
+                    activeEl.classList.add('active');
+                    activeEl.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                }}
+            }}
+
+            // --- 学習アイデア2: シャッフル機能 ---
+            function shuffleArray(array) {{
+                for (let i = array.length - 1; i > 0; i--) {{
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [array[i], array[j]] = [array[j], array[i]];
+                }}
+            }}
+
+            shuffleBtn.addEventListener('click', () => {{
+                isShuffle = !isShuffle;
+                shuffleBtn.innerText = isShuffle ? "🔀 シャッフル: ON" : "🔀 シャッフル: OFF";
+                shuffleBtn.style.backgroundColor = isShuffle ? "#f59e0b" : "#f8fafc";
+                shuffleBtn.style.color = isShuffle ? "white" : "#1e293b";
+                
+                playOrder = vocab.map((_, i) => i);
+                if (isShuffle) {{
+                    shuffleArray(playOrder);
+                }}
+                index = 0;
+                interrupt = true;
+                if (!isPlaying) {{
+                    wordText.innerText = "Order Updated";
+                    meaningText.innerText = "順番が変更されました";
+                }}
+            }});
+
+            const sleep = async (ms) => {{
+                let waited = 0;
+                while (waited < ms && isPlaying && !interrupt) {{
+                    await new Promise(r => setTimeout(r, 100));
+                    waited += 100;
+                }}
+            }};
 
             function speakText(text) {{
                 if (!text) return;
-                if (window.speechSynthesis.paused) {{
-                    window.speechSynthesis.resume();
-                }}
+                if (window.speechSynthesis.paused) window.speechSynthesis.resume();
                 window.speechSynthesis.cancel();
                 
                 currentUtterance = new SpeechSynthesisUtterance(text);
@@ -863,30 +968,28 @@ with tab8:
 
             async function playLoop() {{
                 while (isPlaying) {{
+                    interrupt = false;
                     if (index >= vocab.length) {{ index = 0; }}
-                    const current = vocab[index];
+                    
+                    let originalIdx = playOrder[index];
+                    const current = vocab[originalIdx];
+                    
+                    updateHighlight(originalIdx);
                     
                     wordText.innerText = current.word;
                     meaningText.innerText = "";
                     
-                    let waited = 0;
-                    while (waited < waitBeforeAnswerMs && isPlaying) {{
-                        await sleep(100);
-                        waited += 100;
-                    }}
+                    await sleep(waitBeforeAnswerMs);
                     if (!isPlaying) break;
+                    if (interrupt) continue; // クリックされたらすぐ次のループ(新しいindex)へ
                     
                     meaningText.innerText = current.meaning;
                     speakText(current.word);
                     
-                    waited = 0;
-                    while (waited < waitAfterAnswerMs && isPlaying) {{
-                        await sleep(100);
-                        waited += 100;
-                    }}
+                    await sleep(waitAfterAnswerMs);
                     if (!isPlaying) break;
+                    if (interrupt) continue;
                     
-                    // 次の単語へインデックスを進める
                     index++;
                 }}
             }}
@@ -899,7 +1002,6 @@ with tab8:
                 stopBtn.style.display = 'inline-block';
                 
                 isPlaying = true;
-                // ここにあった index = 0; を削除し、前回の続き（現在のindex）から再生
                 playLoop();
             }});
 
@@ -912,19 +1014,21 @@ with tab8:
                 meaningText.innerText = "一時停止中（▶で続きから）";
             }});
 
-            // 新設：最初からやり直すボタン
             resetBtn.addEventListener('click', () => {{
                 isPlaying = false;
+                interrupt = true;
                 window.speechSynthesis.cancel();
-                index = 0; // インデックスを0（最初）に戻す
+                index = 0;
                 startBtn.style.display = 'inline-block';
                 stopBtn.style.display = 'none';
                 wordText.innerText = "Ready...";
-                meaningText.innerText = "リセットされました";
+                meaningText.innerText = "最初に戻りました";
+                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
             }});
         </script>
         """
-        st.components.v1.html(html_code, height=350)
+        # リストを表示するため高さを 650 に拡大
+        st.components.v1.html(html_code, height=650)
         
 # ============================================================
 # TAB 9: SAVED
