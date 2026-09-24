@@ -761,7 +761,7 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        # スライダーで「単語表示から訳・音声が出るまでの待機時間」を設定（最小2秒、デフォルト3秒）
+        # スライダーで「単語表示から訳・音声が出るまでの待機時間」を設定
         interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=2.0, max_value=10.0, value=3.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
@@ -769,12 +769,17 @@ with tab8:
         
         html_code = f"""
         <div style="text-align: center; font-family: sans-serif; padding: 20px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
-            <button id="startBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: {btn_color}; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
-                ▶ 刷り込みスタート
-            </button>
-            <button id="stopBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #ef4444; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer; display: none; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
-                ■ 停止
-            </button>
+            <div style="margin-bottom: 20px;">
+                <button id="startBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: {btn_color}; border: none; border-radius: 12px; margin-right: 10px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
+                    ▶ 再開 / スタート
+                </button>
+                <button id="stopBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #ef4444; border: none; border-radius: 12px; margin-right: 10px; cursor: pointer; display: none; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
+                    ■ 停止
+                </button>
+                <button id="resetBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #64748b; border: none; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
+                    🔄 最初から
+                </button>
+            </div>
             
             <div style="min-height: 160px; display: flex; flex-direction: column; justify-content: center; background: #0f172a; border-radius: 12px; padding: 20px; border: 1px solid #334155;">
                 <div id="wordText" style="font-size: 38px; font-weight: 900; color: #ffffff; margin-bottom: 12px;">Ready...</div>
@@ -785,18 +790,18 @@ with tab8:
         <script>
             const vocab = {vocab_json};
             const waitBeforeAnswerMs = {int(interval * 1000)};
-            const waitAfterAnswerMs = 2500; // 訳と音声が出た後、次の単語へ進むまでの固定時間（2.5秒）
+            const waitAfterAnswerMs = 2500; // 次の単語へ進むまでの時間
             const langCode = "{lang_code}";
-            let index = 0;
+            let index = 0; // 単語の順番を保持する変数
             let isPlaying = false;
             let currentUtterance = null;
 
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
+            const resetBtn = document.getElementById('resetBtn');
             const wordText = document.getElementById('wordText');
             const meaningText = document.getElementById('meaningText');
 
-            // 待機用の非同期関数
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
             function speakText(text) {{
@@ -812,17 +817,14 @@ with tab8:
                 window.speechSynthesis.speak(currentUtterance);
             }}
 
-            // setIntervalではなく、直列処理(async/await)でタイマーのバッティングを防止
             async function playLoop() {{
                 while (isPlaying) {{
                     if (index >= vocab.length) {{ index = 0; }}
                     const current = vocab[index];
                     
-                    // 1. 単語を表示（訳は非表示）
                     wordText.innerText = current.word;
                     meaningText.innerText = "";
                     
-                    // 2. 訳・音声が出るまで待機（停止ボタンですぐ止まるよう100ms刻みで判定）
                     let waited = 0;
                     while (waited < waitBeforeAnswerMs && isPlaying) {{
                         await sleep(100);
@@ -830,11 +832,9 @@ with tab8:
                     }}
                     if (!isPlaying) break;
                     
-                    // 3. 訳の表示と発音
                     meaningText.innerText = current.meaning;
                     speakText(current.word);
                     
-                    // 4. 訳を表示したまま少し待機（例: 2.5秒）
                     waited = 0;
                     while (waited < waitAfterAnswerMs && isPlaying) {{
                         await sleep(100);
@@ -842,12 +842,12 @@ with tab8:
                     }}
                     if (!isPlaying) break;
                     
+                    // 次の単語へインデックスを進める
                     index++;
                 }}
             }}
 
             startBtn.addEventListener('click', () => {{
-                // 音声自動再生のブロック解除用
                 const unlockAudio = new SpeechSynthesisUtterance('');
                 window.speechSynthesis.speak(unlockAudio);
                 
@@ -855,7 +855,7 @@ with tab8:
                 stopBtn.style.display = 'inline-block';
                 
                 isPlaying = true;
-                index = 0;
+                // ここにあった index = 0; を削除し、前回の続き（現在のindex）から再生
                 playLoop();
             }});
 
@@ -865,7 +865,18 @@ with tab8:
                 startBtn.style.display = 'inline-block';
                 stopBtn.style.display = 'none';
                 wordText.innerText = "Stopped";
-                meaningText.innerText = "お疲れ様でした";
+                meaningText.innerText = "一時停止中（▶で続きから）";
+            }});
+
+            // 新設：最初からやり直すボタン
+            resetBtn.addEventListener('click', () => {{
+                isPlaying = false;
+                window.speechSynthesis.cancel();
+                index = 0; // インデックスを0（最初）に戻す
+                startBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
+                wordText.innerText = "Ready...";
+                meaningText.innerText = "リセットされました";
             }});
         </script>
         """
