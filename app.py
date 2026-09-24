@@ -718,7 +718,6 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        # スライダー最小値を 2.0 秒に変更
         interval = st.slider("次の単語までの間隔（秒）", min_value=2.0, max_value=10.0, value=5.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
@@ -746,16 +745,34 @@ with tab8:
             let index = 0;
             let timerId = null;
             let timeoutId = null;
+            let currentUtterance = null; // GC（自動メモリ破棄）対策用の保持変数
 
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
             const wordText = document.getElementById('wordText');
             const meaningText = document.getElementById('meaningText');
 
+            function speakText(text) {{
+                if (!text) return;
+                
+                // 音声合成エンジンのフリーズ対策
+                if (window.speechSynthesis.paused) {{
+                    window.speechSynthesis.resume();
+                }}
+                window.speechSynthesis.cancel(); // 発音直前にリセット
+
+                currentUtterance = new SpeechSynthesisUtterance(text);
+                currentUtterance.lang = langCode;
+                currentUtterance.rate = 0.9;
+                
+                currentUtterance.onend = () => {{ currentUtterance = null; }};
+                currentUtterance.onerror = () => {{ currentUtterance = null; }};
+
+                window.speechSynthesis.speak(currentUtterance);
+            }}
+
             function speakAndDisplay() {{
-                // 前の単語の待機タイマーと発音をリセット（2秒間隔時などの重複防止）
                 clearTimeout(timeoutId);
-                window.speechSynthesis.cancel();
 
                 if (index >= vocab.length) {{ index = 0; }}
                 const current = vocab[index];
@@ -767,11 +784,7 @@ with tab8:
                 // 3秒後(3000ms)に訳を表示し、発音する
                 timeoutId = setTimeout(() => {{
                     meaningText.innerText = current.meaning;
-                    
-                    const utterance = new SpeechSynthesisUtterance(current.word);
-                    utterance.lang = langCode;
-                    utterance.rate = 0.9;
-                    window.speechSynthesis.speak(utterance);
+                    speakText(current.word);
                 }}, 3000);
                 
                 index++;
