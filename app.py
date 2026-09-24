@@ -1,5 +1,5 @@
 # ============================================================
-# English / Deutsch Pitch & Talk + Immersive Vocab ── 統合・完全版
+# English / Deutsch Pitch & Talk + Immersive Vocab ── ダークテーマ完全版
 # ============================================================
 import streamlit as st
 from google import genai
@@ -12,7 +12,6 @@ import os
 import re
 import requests
 from gtts import gTTS
-from datetime import datetime
 
 try:
     from pypdf import PdfReader
@@ -41,23 +40,29 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ── CSS ──────────────────────────────────────────────────────
+# ── CSS (ダーク・ハイコントラストテーマ) ─────────────────────────
 st.markdown("""
 <style>
-.stApp { background: #f0f2f5; }
+/* アプリ全体の背景と基本テキスト色 */
+.stApp { background-color: #121212; }
 .block-container { padding-top: 0 !important; max-width: 840px; }
 header[data-testid="stHeader"] { background: transparent; }
 
+/* Streamlitのデフォルトテキストを強制的に白・明るいグレーにする */
+p, h1, h2, h3, h4, h5, h6, label, span, div.stMarkdown {
+    color: #f8fafc !important;
+}
+
 /* Tabs */
 .stTabs [data-baseweb="tab-list"] {
-    background: white;
-    border-bottom: 2px solid #e2e8f0;
+    background: #1e293b;
+    border-bottom: 2px solid #334155;
     gap: 0;
     padding: 0 6px;
     position: sticky;
     top: 0;
     z-index: 100;
-    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
 }
 .stTabs [data-baseweb="tab"] {
     font-weight: 700 !important;
@@ -67,8 +72,8 @@ header[data-testid="stHeader"] { background: transparent; }
     color: #94a3b8 !important;
 }
 .stTabs [aria-selected="true"] {
-    color: var(--acc, #1d4ed8) !important;
-    border-bottom: 3px solid var(--acc, #1d4ed8) !important;
+    color: var(--acc, #3b82f6) !important;
+    border-bottom: 3px solid var(--acc, #3b82f6) !important;
     background: transparent !important;
 }
 .stTabs [data-baseweb="tab-panel"] { padding-top: 14px !important; }
@@ -78,30 +83,34 @@ header[data-testid="stHeader"] { background: transparent; }
     border-radius: 12px !important;
     font-weight: 700 !important;
     transition: all .2s !important;
-    border: none !important;
+    border: 1px solid #334155 !important;
+    background: #1e293b !important;
+    color: #f8fafc !important;
 }
 .stButton>button:hover {
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 14px rgba(0,0,0,.15) !important;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4) !important;
+    border-color: var(--acc, #3b82f6) !important;
 }
 .stTextArea textarea, .stTextInput input {
     border-radius: 12px !important;
-    border: 2px solid #e5e7eb !important;
-    transition: border-color .2s !important;
+    border: 2px solid #334155 !important;
+    background: #0f172a !important;
+    color: #f8fafc !important;
 }
 .stTextArea textarea:focus, .stTextInput input:focus {
-    border-color: var(--acc, #1d4ed8) !important;
+    border-color: var(--acc, #3b82f6) !important;
     box-shadow: none !important;
 }
 
 /* Custom UI Components */
 .ep-card {
-    background: white;
+    background: #1e293b;
     border-radius: 16px;
     padding: 20px;
     margin: 10px 0;
-    box-shadow: 0 2px 12px rgba(0,0,0,.07);
-    border: 1px solid #e8edf5;
+    box-shadow: 0 4px 12px rgba(0,0,0,.3);
+    border: 1px solid #334155;
 }
 .ep-script {
     border-radius: 16px;
@@ -109,11 +118,12 @@ header[data-testid="stHeader"] { background: transparent; }
     margin-bottom: 14px;
     border-left-width: 6px;
     border-left-style: solid;
+    background: #0f172a;
 }
 .ep-script-text {
     font-size: 20px;
     font-weight: 700;
-    color: #1e293b;
+    color: #ffffff !important;
     line-height: 1.8;
 }
 .ep-label {
@@ -123,7 +133,7 @@ header[data-testid="stHeader"] { background: transparent; }
     font-weight: 800;
     display: inline-block;
     margin-bottom: 10px;
-    color: white;
+    color: white !important;
 }
 .ep-vocab {
     border-radius: 20px;
@@ -132,62 +142,12 @@ header[data-testid="stHeader"] { background: transparent; }
     font-weight: 600;
     display: inline-block;
     margin: 3px;
-}
-.ep-qa {
-    background: #f8fafc;
-    border-radius: 12px;
-    padding: 14px;
-    margin-bottom: 10px;
-}
-.ep-score-box {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 14px;
-}
-.ep-score-num {
-    font-size: 52px;
-    font-weight: 900;
-    line-height: 1;
-}
-.ep-bar-wrap {
-    background: #f1f5f9;
-    border-radius: 8px;
-    height: 12px;
-    overflow: hidden;
-    margin-bottom: 14px;
-}
-.ep-bar { height: 100%; border-radius: 8px; }
-.ep-chat-wrap {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 14px;
-    min-height: 200px;
-    max-height: 340px;
-    overflow-y: auto;
-    margin-bottom: 10px;
-}
-.ep-bubble-user {
-    border-radius: 18px 18px 4px 18px;
-    padding: 10px 14px;
-    margin: 7px 0 7px 15%;
-    font-size: 13px;
-    color: white;
-}
-.ep-bubble-ai {
-    background: white;
-    border: 1px solid #e2e8f0;
-    border-radius: 18px 18px 18px 4px;
-    padding: 10px 14px;
-    margin: 7px 15% 7px 0;
-    font-size: 13px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    color: #ffffff !important;
 }
 .ep-ph {
     text-align: center;
     padding: 48px 20px;
-    color: #94a3b8;
+    color: #64748b;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -203,8 +163,6 @@ LANG = {
         'switch_btn': '🇩🇪 Deutschに切替',
         'persona_biz': '🧳 バイヤー',
         'persona_daily': '💬 ネイティブ',
-        'filler_label': 'フィラーカード（時間かせぎフレーズ）',
-        'accent': '#1d4ed8',
     },
     'de': {
         'flag': '🇩🇪', 'name': 'Deutsch', 'tts': 'de',
@@ -215,8 +173,6 @@ LANG = {
         'switch_btn': '🇺🇸 Englishに切替',
         'persona_biz': '🧳 Käufer',
         'persona_daily': '💬 Muttersprachler',
-        'filler_label': 'Filler-Karten（時間かせぎフレーズ・独語）',
-        'accent': '#b45309',
     },
 }
 
@@ -244,44 +200,25 @@ DAILY_SCENARIOS = {
     'de': ["🎯 おまかせ", "☕ Café/Restaurant", "🗺️ Tourismus/Wegbeschreibung", "🏨 Hotel/Verkehr", "🛒 Einkaufen", "👋 Vorstellung/Smalltalk", "🚨 Notfall/Probleme"],
 }
 
-FILLERS = {
-    'en': [
-        ("That's a great question.", "いい質問ですね"),
-        ("Let me explain.", "説明します"),
-        ("In other words...", "つまり..."),
-        ("For example...", "例えば..."),
-        ("One moment, please.", "少々お待ちください"),
-        ("Let me check.", "確認させてください"),
-    ],
-    'de': [
-        ("Das ist eine gute Frage.", "いい質問ですね"),
-        ("Lassen Sie mich erklären.", "説明させてください"),
-        ("Mit anderen Worten...", "つまり..."),
-        ("Zum Beispiel...", "例えば..."),
-        ("Einen Moment bitte.", "少々お待ちください"),
-        ("Lassen Sie mich das prüfen.", "確認させてください"),
-    ],
-}
-
-# ── HELPERS ──────────────────────────────────────────────────
+# ── HELPERS (ダークテーマ用カラーパレット) ─────────────────────
 def ac(is_biz, lang='en'):
     if is_biz:
-        base = {"main": "#1d4ed8", "light": "#eff6ff", "border": "#bfdbfe"}
+        base = {"main": "#3b82f6", "light": "#1e3a8a", "border": "#2563eb"}
     else:
-        base = {"main": "#0d9488", "light": "#f0fdfa", "border": "#99f6e4"}
+        base = {"main": "#10b981", "light": "#064e3b", "border": "#059669"}
     
     if lang == 'de':
-        base["main"] = "#b45309" if is_biz else "#0f766e"
-        base["light"] = "#fffbeb" if is_biz else "#f0fdfa"
-        base["border"] = "#fde68a" if is_biz else "#99f6e4"
+        base["main"] = "#f59e0b" if is_biz else "#14b8a6"
+        base["light"] = "#78350f" if is_biz else "#134e4a"
+        base["border"] = "#d97706" if is_biz else "#0d9488"
     return base
 
 def ph(name):
     return f"""
     <div class="ep-ph">
         <div style="font-size:48px;margin-bottom:12px;">📝</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px;color:#64748b;">「📝 入力」タブで内容を入力してください</div>
-        <div style="font-size:12px;">{name} はコンテンツ生成後に表示されます</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px;color:#94a3b8;">「📝 入力」タブで内容を入力してください</div>
+        <div style="font-size:12px;color:#64748b;">{name} はコンテンツ生成後に表示されます</div>
     </div>
     """
 
@@ -298,15 +235,15 @@ def gen_audio(text, lang='en'):
         </audio>
         <div style="display:flex; gap:8px;">
             <button onclick="document.getElementById('epA').playbackRate=0.8; document.getElementById('epA').play();"
-                style="flex:1; padding:9px 0; border:2px solid #e2e8f0; border-radius:10px; background:white; cursor:pointer; font-weight:700;">
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
                 🐢 0.8x
             </button>
             <button onclick="document.getElementById('epA').playbackRate=1.0; document.getElementById('epA').play();"
-                style="flex:1; padding:9px 0; border:2px solid #e2e8f0; border-radius:10px; background:white; cursor:pointer; font-weight:700;">
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
                 ▶️ 1.0x
             </button>
             <button onclick="document.getElementById('epA').playbackRate=1.2; document.getElementById('epA').play();"
-                style="flex:1; padding:9px 0; border:2px solid #e2e8f0; border-radius:10px; background:white; cursor:pointer; font-weight:700;">
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
                 ⚡ 1.2x
             </button>
         </div>
@@ -318,8 +255,8 @@ def detect_audio_mime(data: bytes) -> str:
     if not data or len(data) < 12: 
         return 'audio/mp4'
     h = data[:12]
-    if h[:4] == b'RIFF' and h == b'WAVE': return 'audio/wav'
-    if h[4:8] == b'ftyp' or h == b'ftyp': return 'audio/mp4'
+    if h[:4] == b'RIFF' and h[8:12] == b'WAVE': return 'audio/wav'
+    if h[4:8] == b'ftyp' or h[8:12] == b'ftyp': return 'audio/mp4'
     if h[:4] == b'\x1aE\xdf\xa3': return 'audio/webm'
     if h[:4] == b'OggS': return 'audio/ogg'
     if h[:3] == b'ID3' or (h[0] == 0xFF and (h[1] & 0xE0) == 0xE0): return 'audio/mp3'
@@ -345,7 +282,7 @@ def extract_url(url: str) -> str:
     except Exception as e: 
         return f"取得失敗: {e}"
 
-# ── NEW API WRAPPERS (google-genai) ──────────────────────────
+# ── NEW API WRAPPERS ─────────────────────────────────────────
 def call_text(prompt: str, system: str = "") -> str:
     if not st.session_state.get("_client"): 
         raise RuntimeError("APIクライアント未初期化")
@@ -364,14 +301,13 @@ def call_audio(prompt: str, audio_bytes: bytes) -> str:
     resp = st.session_state["_client"].models.generate_content(
         model=GEMINI_MODEL,
         contents=[
-            types.Part.from_text(prompt), 
+            types.Part.from_text(text=prompt), # エラー修正箇所
             types.Part.from_bytes(data=audio_bytes, mime_type=mime)
         ]
     )
     return resp.text
 
 def extract_vocab_from_image(img_bytes: bytes, mime_type: str, lang: str = 'en') -> list:
-    """Geminiを使って画像から単語をJSONとして抽出"""
     if not st.session_state.get("_client"): 
         raise RuntimeError("APIクライアント未初期化")
     
@@ -387,18 +323,17 @@ def extract_vocab_from_image(img_bytes: bytes, mime_type: str, lang: str = 'en')
     resp = st.session_state["_client"].models.generate_content(
         model=GEMINI_MODEL,
         contents=[
-            types.Part.from_text(prompt),
+            types.Part.from_text(text=prompt), # エラー修正箇所
             types.Part.from_bytes(data=img_bytes, mime_type=mime_type),
         ],
     )
     
-    # 修正: SyntaxErrorの原因となる raw string 内のバッククォートを .replace() で安全に処理
     text = resp.text.replace("```json\n", "").replace("```json", "").replace("\n```", "").replace("```", "").strip()
     
     try: 
         return json.loads(text)
     except Exception as e:
-        st.error(f"データの解析に失敗しました。詳細: {e}\n\n取得テキスト: {text}")
+        st.error(f"データの解析に失敗しました。詳細: {e}")
         return []
 
 def do_generate(prompt: str, sys_p: str) -> dict:
@@ -499,7 +434,6 @@ mode = st.radio("モード", ["🏢 展示会・ビジネス", "☕ 日常会話
 is_biz = "展示会" in mode
 C = ac(is_biz, lang)
 
-# 動的テーマカラーの適用
 st.markdown(f"<style>:root{{--acc:{C['main']};}}</style>", unsafe_allow_html=True)
 
 sys_p = {
@@ -510,11 +444,11 @@ sys_p = {
 }.get((lang, is_biz), "")
 
 st.markdown(f"""
-<div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc); color:white; padding:18px 22px 14px; border-radius:16px; margin-bottom:14px;">
+<div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc); color:white; padding:18px 22px 14px; border-radius:16px; margin-bottom:14px; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
   <div style="font-size:21px; font-weight:900; margin-bottom:3px;">
     {LS['flag']} {LS['app_title']}
   </div>
-  <div style="font-size:11px; opacity:.75;">
+  <div style="font-size:11px; opacity:.9;">
     {LS['sub_biz'] if is_biz else LS['sub_daily']}
   </div>
 </div>
@@ -576,7 +510,7 @@ with tab1:
 
     elif im == "🔗 URL":
         st.info("🔗 会社HPや製品ページのURLを入力してスクリプトを生成します。")
-        url_in = st.text_input("URLを入力", placeholder="[https://example.com/product](https://example.com/product)")
+        url_in = st.text_input("URLを入力", placeholder="https://example.com/product")
         if url_in and st.button("🔍 URLを取得"):
             with st.spinner("Webページを取得中..."): 
                 url_text = extract_url(url_in)
@@ -597,13 +531,12 @@ with tab1:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
                     if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
-                        # PDF/URL用のプロンプト（要約重視）
                         prompt = f"""
                         提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
                         [テキスト]: {user_input[:2000]}
                         [場面]: {"ビジネス" if is_biz else "日常"}
                         """
-                        prompt += build_prompt("", is_biz, level_key, lang, scenario) # JSON構造を付与
+                        prompt += build_prompt("", is_biz, level_key, lang, scenario)
                     else: 
                         prompt = build_prompt(user_input, is_biz, level_key, lang, scenario)
                     
@@ -629,10 +562,10 @@ with tab2:
         st.markdown(ph("📖 スクリプト"), unsafe_allow_html=True)
     else:
         st.markdown(f"""
-        <div class="ep-script" style="background:{C['light']}; border:2px solid {C['border']}; border-left-color:{C['main']};">
+        <div class="ep-script" style="border-left-color:{C['main']};">
             <div class="ep-label" style="background:{C['main']};">📖 {LS['script_lbl']}</div>
             <div class="ep-script-text">{data.get('chunked', data.get('english',''))}</div>
-            <div style="font-size:13px; color:#475569; margin-top:10px; padding:8px; background:rgba(255,255,255,.7); border-radius:8px;">
+            <div style="font-size:13px; color:#cbd5e1; margin-top:10px; padding:8px; background:rgba(255,255,255,.05); border-radius:8px;">
                 🇯🇵 {data.get('english_jp','')}
             </div>
         </div>
@@ -641,13 +574,13 @@ with tab2:
         if data.get('vocab'):
             st.markdown(f'<div class="ep-card"><div class="ep-label" style="background:{C["main"]};">📝 重要語彙</div><div>', unsafe_allow_html=True)
             for k, v in data['vocab'].items():
-                st.markdown(f'<span class="ep-vocab" style="background:{C["light"]}; color:{C["main"]};"><strong>{k}</strong>: {v}</span>', unsafe_allow_html=True)
+                st.markdown(f'<span class="ep-vocab" style="background:{C["light"]}; border:1px solid {C["border"]};"><strong>{k}</strong>: {v}</span>', unsafe_allow_html=True)
             st.markdown('</div></div>', unsafe_allow_html=True)
             
         st.markdown(f"""
         <div class="ep-card">
             <div class="ep-label" style="background:{C["main"]};">📚 文法・フレーズ解説</div>
-            <div style="font-size:13px; color:#475569; line-height:1.8;">{data.get("grammar","")}</div>
+            <div style="font-size:13px; color:#cbd5e1; line-height:1.8;">{data.get("grammar","")}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -661,7 +594,7 @@ with tab3:
         st.markdown(f"""
         <div class="ep-card">
             <div class="ep-label" style="background:{C['main']};">🎵 シャドーイング</div>
-            <div style="font-size:16px; font-weight:600; margin-bottom:12px;">{data.get('chunked','')}</div>
+            <div style="font-size:16px; font-weight:600; margin-bottom:12px; color:#f8fafc;">{data.get('chunked','')}</div>
         </div>
         """, unsafe_allow_html=True)
         st.components.v1.html(gen_audio(data.get('english',''), LS['tts']), height=130)
@@ -685,7 +618,7 @@ with tab4:
                         resp = st.session_state["_client"].models.generate_content(
                             model=GEMINI_MODEL,
                             contents=[
-                                types.Part.from_text(p_msg), 
+                                types.Part.from_text(text=p_msg), # エラー修正箇所
                                 types.Part.from_bytes(data=rec.getvalue(), mime_type=mime)
                             ],
                             config=types.GenerateContentConfig(system_instruction=p_sys)
@@ -791,16 +724,16 @@ with tab8:
         btn_color = C["main"]
         
         html_code = f"""
-        <div style="text-align: center; font-family: sans-serif; padding: 20px; background-color: #f8fafc; border-radius: 16px;">
-            <button id="startBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: {btn_color}; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer;">
+        <div style="text-align: center; font-family: sans-serif; padding: 20px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
+            <button id="startBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: {btn_color}; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
                 ▶ 刷り込みスタート
             </button>
-            <button id="stopBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #64748b; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer; display: none;">
+            <button id="stopBtn" style="padding: 12px 24px; font-size: 16px; font-weight: 700; color: white; background-color: #ef4444; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer; display: none; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
                 ■ 停止
             </button>
             
-            <div style="min-height: 160px; display: flex; flex-direction: column; justify-content: center; background: white; border-radius: 12px; padding: 20px;">
-                <div id="wordText" style="font-size: 38px; font-weight: 900; color: #1e293b; margin-bottom: 12px;">Ready...</div>
+            <div style="min-height: 160px; display: flex; flex-direction: column; justify-content: center; background: #0f172a; border-radius: 12px; padding: 20px; border: 1px solid #334155;">
+                <div id="wordText" style="font-size: 38px; font-weight: 900; color: #ffffff; margin-bottom: 12px;">Ready...</div>
                 <div id="meaningText" style="font-size: 20px; font-weight: 700; color: {btn_color};">ボタンを押して開始</div>
             </div>
         </div>
@@ -876,6 +809,6 @@ with tab9:
             st.markdown(f"""
             <div class="ep-card">
                 <strong>{item.get('title', '無題')}</strong><br>
-                <span style="font-size:12px; color:#64748b;">{item.get('english_jp', '')}</span>
+                <span style="font-size:12px; color:#cbd5e1;">{item.get('english_jp', '')}</span>
             </div>
             """, unsafe_allow_html=True)
