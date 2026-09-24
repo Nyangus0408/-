@@ -678,36 +678,79 @@ with tab6:
                 except Exception as e: 
                     st.error(e)
 
+import json
+
 # ============================================================
-# TAB 7: VOCAB EXTRACTION (IMAGE)
+# TAB 7: 画像単語 (IMAGE VOCAB)
 # ============================================================
 with tab7:
     st.markdown("### 📸 カメラ / 画像から単語を取り込み")
-    st.markdown("単語帳や書類を撮影して、自動でリスト化します。")
+    st.write("単語帳や書類を撮影して、自動でリスト化します。")
     
-    camera_image = st.camera_input("📸 カメラで撮影")
-    uploaded_image = st.file_uploader("📂 または画像をアップロード", type=["jpg", "jpeg", "png"])
-    img_source = camera_image or uploaded_image
+    # ----------------------------------------------------
+    # ① 単語データの保存・復元機能（自動結合バージョン）
+    # ----------------------------------------------------
+    st.markdown("#### 💾 単語データの保存と復元")
+    col1, col2 = st.columns(2)
+    with col1:
+        # 復元・結合機能（アップロード）
+        uploaded_file = st.file_uploader("📂 保存したJSONファイルを読み込む", type=["json"])
+        if uploaded_file is not None:
+            try:
+                loaded_vocab = json.load(uploaded_file)
+                
+                if 'vocab_list' not in st.session_state:
+                    st.session_state.vocab_list = []
+                
+                # すでに存在する単語（重複）チェック用の準備
+                existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
+                
+                added_count = 0
+                for item in loaded_vocab:
+                    if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
+                        st.session_state.vocab_list.append(item)
+                        existing_words.add(item.get('word'))
+                        added_count += 1
+                
+                st.success(f"単語リストを結合しました！（新規追加: {added_count}件 / 合計: {len(st.session_state.vocab_list)}件）")
+            except Exception as e:
+                st.error("ファイルの読み込みに失敗しました。")
+
+    with col2:
+        # 保存機能（ダウンロード）
+        if 'vocab_list' in st.session_state and st.session_state.vocab_list:
+            json_str = json.dumps(st.session_state.vocab_list, ensure_ascii=False, indent=2)
+            st.download_button(
+                label=f"⬇️ 単語リストをPCに保存（計 {len(st.session_state.vocab_list)} 件）",
+                data=json_str,
+                file_name="my_vocab_list.json",
+                mime="application/json",
+                type="primary"
+            )
+        else:
+            st.info("保存できる単語データがありません")
+            
+    st.divider()
+
+    # ----------------------------------------------------
+    # ② カメラの任意起動機能
+    # ----------------------------------------------------
+    st.markdown("#### 📷 画像の取り込み")
     
-    if img_source:
-        st.image(img_source, caption="読み込み画像", use_container_width=True)
-        if st.button("✨ この画像から単語を抽出する", use_container_width=True, type="primary"):
-            with st.spinner("AIが単語を解析中..."):
-                try:
-                    mime_type = img_source.type if hasattr(img_source, "type") and img_source.type else "image/jpeg"
-                    extracted = extract_vocab_from_image(img_source.getvalue(), mime_type, lang)
-                    if extracted:
-                        st.session_state.vocab_list.extend(extracted)
-                        st.success(f"✅ {len(extracted)}件の単語を保存しました！「▶️ フラッシュ」タブで再生できます。")
-                except Exception as e:
-                    st.error(f"❌ 抽出エラー: {e}")
+    # チェックボックスにチェックを入れた時だけカメラを起動する
+    use_camera = st.checkbox("カメラを起動する")
     
-    if st.session_state.vocab_list:
-        st.markdown("### 📝 現在保存されている単語")
-        st.dataframe(st.session_state.vocab_list, use_container_width=True)
-        if st.button("🗑 リストをリセット"):
-            st.session_state.vocab_list = []
-            st.rerun()
+    camera_image = None
+    if use_camera:
+        camera_image = st.camera_input("カメラで撮影")
+
+
+    # ============================================================
+    # ⚠️ 注意 ⚠️
+    # これより下にある「if camera_image:」から始まる画像解析のコード
+    # （Geminiに画像を送って単語を抽出する処理など）は、
+    # 絶対に消さずにそのまま残しておいてください！
+    # ============================================================
 
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
