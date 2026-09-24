@@ -178,22 +178,27 @@ LANG = {
 
 LEVELS = {
     "🌱 初学者 (A1)": {
-        'en': "be動詞・have・like等の最基本動詞のみ。主語＋動詞の最小構造。5単語以内。",
-        'de': "nur sein/haben/mögen. Einfachste Satzstruktur. Maximal 5 Wörter.",
+        'en':"be動詞・have・like等の最基本動詞のみ。主語＋動詞の最小構造。5単語以内。",
+        'de':"nur sein/haben/mögen. Einfachste Satzstruktur. Maximal 5 Wörter.",
     },
     "📗 基礎 (A2)": {
-        'en': "中学英語。1文12単語以内。SVO構造のみ。関係代名詞・接続詞禁止。",
-        'de': "Grundlegendes Deutsch. Max. 12 Wörter. Einfache SVO-Struktur.",
+        'en':"中学英語。1文12単語以内。SVO構造のみ。関係代名詞・接続詞禁止。",
+        'de':"Grundlegendes Deutsch. Max. 12 Wörter. Einfache SVO-Struktur.",
     },
     "📘 中級 (B1/B2)": {
-        'en': "高校英語。接続詞（because/when）可。やや複雑な構造OK。",
-        'de': "Mittelstufe. Konjunktionen (weil/obwohl) erlaubt.",
+        'en':"高校英語。接続詞（because/when）可。やや複雑な構造OK。",
+        'de':"Mittelstufe. Konjunktionen (weil/obwohl) erlaubt.",
     },
     "📙 上級 (C1)": {
-        'en': "ビジネス英語。受動態・完了形・専門用語適宜使用。",
-        'de': "Geschäftsdeutsch. Passiv, Konjunktiv II, Fachvokabular erlaubt.",
-    }
+        'en':"ビジネス英語。受動態・完了形・専門用語適宜使用。",
+        'de':"Geschäftsdeutsch. Passiv, Konjunktiv II, Fachvokabular erlaubt.",
+    },
+    "🚀 ネイティブ風": {
+        'en':"ネイティブが日常的に使う自然な表現。慣用句・略語も使用可。",
+        'de':"Natürliches Deutsch. Idiome und Umgangssprache erlaubt.",
+    },
 }
+
 
 DAILY_SCENARIOS = {
     'en': ["🎯 おまかせ", "☕ カフェ/レストラン", "🗺️ 観光/道案内", "🏨 ホテル/交通", "🛒 買い物", "👋 自己紹介/雑談", "🚨 緊急/トラブル"],
@@ -607,7 +612,7 @@ with tab4:
         st.markdown(ph("🎤 発音"), unsafe_allow_html=True)
     else:
         st.markdown(f"**この文を読んでください:**\n### {data.get('english','')}")
-        rec = st.audio_input("録音")
+        rec = st.audio_input("録音", key="main_audio_record")
         if rec and st.session_state.get("_client"):
             if st.button("📈 採点する", type="primary", use_container_width=True):
                 with st.spinner("AIが発音を分析中..."):
