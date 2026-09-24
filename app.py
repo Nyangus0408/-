@@ -718,7 +718,7 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        # 3秒後に発音・訳表示を行うため、次の単語までの間隔は最低4秒以上に設定
+        # スライダー最小値を 2.0 秒に変更
         interval = st.slider("次の単語までの間隔（秒）", min_value=2.0, max_value=10.0, value=5.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
@@ -753,6 +753,10 @@ with tab8:
             const meaningText = document.getElementById('meaningText');
 
             function speakAndDisplay() {{
+                // 前の単語の待機タイマーと発音をリセット（2秒間隔時などの重複防止）
+                clearTimeout(timeoutId);
+                window.speechSynthesis.cancel();
+
                 if (index >= vocab.length) {{ index = 0; }}
                 const current = vocab[index];
                 
@@ -788,7 +792,7 @@ with tab8:
 
             stopBtn.addEventListener('click', () => {{
                 clearInterval(timerId);
-                clearTimeout(timeoutId); // 3秒待機中のタイマーも正確にキャンセル
+                clearTimeout(timeoutId);
                 window.speechSynthesis.cancel();
                 startBtn.style.display = 'inline-block';
                 stopBtn.style.display = 'none';
@@ -798,7 +802,6 @@ with tab8:
         </script>
         """
         st.components.v1.html(html_code, height=350)
-
 # ============================================================
 # TAB 9: SAVED
 # ============================================================
