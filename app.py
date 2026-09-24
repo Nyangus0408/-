@@ -719,7 +719,7 @@ with tab8:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
         # 3秒後に発音・訳表示を行うため、次の単語までの間隔は最低4秒以上に設定
-        interval = st.slider("次の単語までの間隔（秒）", min_value=4.0, max_value=10.0, value=5.0, step=0.5)
+        interval = st.slider("次の単語までの間隔（秒）", min_value=2.0, max_value=10.0, value=5.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
         btn_color = C["main"]
