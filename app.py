@@ -718,7 +718,8 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        interval = st.slider("表示間隔（秒）", min_value=1.0, max_value=5.0, value=2.5, step=0.5)
+        # 3秒後に発音・訳表示を行うため、次の単語までの間隔は最低4秒以上に設定
+        interval = st.slider("次の単語までの間隔（秒）", min_value=4.0, max_value=10.0, value=5.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
         btn_color = C["main"]
@@ -744,6 +745,7 @@ with tab8:
             const langCode = "{lang_code}";
             let index = 0;
             let timerId = null;
+            let timeoutId = null;
 
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
@@ -754,22 +756,25 @@ with tab8:
                 if (index >= vocab.length) {{ index = 0; }}
                 const current = vocab[index];
                 
+                // 単語を表示し、訳をクリア
                 wordText.innerText = current.word;
                 meaningText.innerText = "";
                 
-                setTimeout(() => {{
+                // 3秒後(3000ms)に訳を表示し、発音する
+                timeoutId = setTimeout(() => {{
                     meaningText.innerText = current.meaning;
-                }}, 800);
-                
-                const utterance = new SpeechSynthesisUtterance(current.word);
-                utterance.lang = langCode;
-                utterance.rate = 0.9;
-                window.speechSynthesis.speak(utterance);
+                    
+                    const utterance = new SpeechSynthesisUtterance(current.word);
+                    utterance.lang = langCode;
+                    utterance.rate = 0.9;
+                    window.speechSynthesis.speak(utterance);
+                }}, 3000);
                 
                 index++;
             }}
 
             startBtn.addEventListener('click', () => {{
+                // ブラウザの音声自動再生ブロック解除用
                 const unlockAudio = new SpeechSynthesisUtterance('');
                 window.speechSynthesis.speak(unlockAudio);
                 
@@ -783,6 +788,7 @@ with tab8:
 
             stopBtn.addEventListener('click', () => {{
                 clearInterval(timerId);
+                clearTimeout(timeoutId); // 3秒待機中のタイマーも正確にキャンセル
                 window.speechSynthesis.cancel();
                 startBtn.style.display = 'inline-block';
                 stopBtn.style.display = 'none';
