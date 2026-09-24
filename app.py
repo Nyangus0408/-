@@ -679,7 +679,7 @@ with tab6:
                     st.error(e)
 
 import json
-
+from PIL import Image
 # ============================================================
 # TAB 7: 画像単語 (IMAGE VOCAB)
 # ============================================================
@@ -732,7 +732,6 @@ with tab7:
     # ----------------------------------------------------
     st.markdown("#### 📷 画像の取り込みと単語変換")
     
-    # 取り込み方法の選択（カメラ起動 or ファイル選択）
     input_method = st.radio("取り込み方法を選択", ["ファイルから選択（ギャラリー・フォルダ）", "カメラで撮影"], horizontal=True)
     
     image_to_process = None
@@ -744,19 +743,43 @@ with tab7:
     else:
         image_to_process = st.file_uploader("画像ファイルを選択（PNG, JPG, JPEGなど）", type=["png", "jpg", "jpeg"], key="img_uploader")
 
-    # 画像が取得できたらGemini等で単語変換処理を実行
     if image_to_process is not None:
         st.image(image_to_process, caption="選択・撮影された画像", use_container_width=True)
         
         if st.button("✨ この画像から単語を抽出する", type="primary"):
-            with st.spinner("画像を解析して単語を抽出中..."):
+            with st.spinner("Geminiが画像を解析して単語を抽出中..."):
                 try:
-                    # 画像データをバイト列として取得
-                    image_bytes = image_to_process.getvalue()
+                    # 画像をPIL形式で開く
+                    img = Image.open(image_to_process)
                     
-                    # Gemini API等を用いた抽出処理（元のアプリに実装されていた処理を呼び出し）
-                    # ※もしお手元のコードの関数名が異なる場合は適宜合わせてください
-                    extracted_items = extract_vocabulary_from_image(image_bytes, lang)
+                    # 学習言語の判定
+                    target_lang = "英語" if lang == 'en' else "ドイツ語"
+                    
+                    # Geminiモデルの呼び出し (既存の初期設定済みのgenaiを使用)
+                    import google.generativeai as genai
+                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    
+                    prompt = f"""
+                    この画像に含まれる{target_lang}の単語を抽出し、以下のJSON形式の配列でのみ出力してください。
+                    マークダウン（```json など）は一切含めず、純粋なJSON文字列だけを返してください。
+                    [
+                      {{"word": "抽出した単語1", "meaning": "日本語の訳1"}},
+                      {{"word": "抽出した単語2", "meaning": "日本語の訳2"}}
+                    ]
+                    """
+                    
+                    response = model.generate_content([prompt, img])
+                    
+                    # JSONデータのクリーニング
+                    result_text = response.text.strip()
+                    if result_text.startswith("```json"):
+                        result_text = result_text[7:]
+                    if result_text.startswith("```"):
+                        result_text = result_text[3:]
+                    if result_text.endswith("```"):
+                        result_text = result_text[:-3]
+                        
+                    extracted_items = json.loads(result_text.strip())
                     
                     if extracted_items:
                         if 'vocab_list' not in st.session_state:
@@ -771,12 +794,12 @@ with tab7:
                                 new_added += 1
                         
                         st.success(f"{new_added}件の単語を新しく追加しました！（合計: {len(st.session_state.vocab_list)}件）")
-                        st.rerun()
                     else:
-                        st.warning("画像から単語を検出できませんでした。別の画像をお試しください。")
+                        st.warning("画像から単語を検出できませんでした。別の画像でお試しください。")
+                except json.JSONDecodeError:
+                    st.error("AIからのデータ受け取りに失敗しました。もう一度「抽出する」ボタンを押してください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
-
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
