@@ -718,8 +718,8 @@ with tab8:
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
     else:
-        # スライダー最小値を 2.0秒、デフォルトを 3.0秒 に設定
-        interval = st.slider("次の単語までの間隔（秒）", min_value=2.0, max_value=10.0, value=3.0, step=0.5)
+        # スライダーで「単語表示から訳・音声が出るまでの待機時間」を設定（最小2秒、デフォルト3秒）
+        interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=2.0, max_value=10.0, value=3.0, step=0.5)
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
         btn_color = C["main"]
@@ -741,54 +741,66 @@ with tab8:
 
         <script>
             const vocab = {vocab_json};
-            const intervalMs = {int(interval * 1000)};
+            const waitBeforeAnswerMs = {int(interval * 1000)};
+            const waitAfterAnswerMs = 2500; // 訳と音声が出た後、次の単語へ進むまでの固定時間（2.5秒）
             const langCode = "{lang_code}";
             let index = 0;
-            let timerId = null;
-            let timeoutId = null;
-            let currentUtterance = null; // ガベージコレクション（自動削除）対策
+            let isPlaying = false;
+            let currentUtterance = null;
 
             const startBtn = document.getElementById('startBtn');
             const stopBtn = document.getElementById('stopBtn');
             const wordText = document.getElementById('wordText');
             const meaningText = document.getElementById('meaningText');
 
+            // 待機用の非同期関数
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
             function speakText(text) {{
                 if (!text) return;
-                
                 if (window.speechSynthesis.paused) {{
                     window.speechSynthesis.resume();
                 }}
                 window.speechSynthesis.cancel();
-
+                
                 currentUtterance = new SpeechSynthesisUtterance(text);
                 currentUtterance.lang = langCode;
                 currentUtterance.rate = 0.9;
-                
-                currentUtterance.onend = () => {{ currentUtterance = null; }};
-                currentUtterance.onerror = () => {{ currentUtterance = null; }};
-
                 window.speechSynthesis.speak(currentUtterance);
             }}
 
-            function speakAndDisplay() {{
-                // 次の単語に進む際、前の単語の待機タイマーをクリア
-                clearTimeout(timeoutId);
-
-                if (index >= vocab.length) {{ index = 0; }}
-                const current = vocab[index];
-                
-                // 単語を表示し、訳をクリア
-                wordText.innerText = current.word;
-                meaningText.innerText = "";
-                
-                // 3秒後(3000ms)に訳を表示し、発音する
-                timeoutId = setTimeout(() => {{
+            // setIntervalではなく、直列処理(async/await)でタイマーのバッティングを防止
+            async function playLoop() {{
+                while (isPlaying) {{
+                    if (index >= vocab.length) {{ index = 0; }}
+                    const current = vocab[index];
+                    
+                    // 1. 単語を表示（訳は非表示）
+                    wordText.innerText = current.word;
+                    meaningText.innerText = "";
+                    
+                    // 2. 訳・音声が出るまで待機（停止ボタンですぐ止まるよう100ms刻みで判定）
+                    let waited = 0;
+                    while (waited < waitBeforeAnswerMs && isPlaying) {{
+                        await sleep(100);
+                        waited += 100;
+                    }}
+                    if (!isPlaying) break;
+                    
+                    // 3. 訳の表示と発音
                     meaningText.innerText = current.meaning;
                     speakText(current.word);
-                }}, 3000);
-                
-                index++;
+                    
+                    // 4. 訳を表示したまま少し待機（例: 2.5秒）
+                    waited = 0;
+                    while (waited < waitAfterAnswerMs && isPlaying) {{
+                        await sleep(100);
+                        waited += 100;
+                    }}
+                    if (!isPlaying) break;
+                    
+                    index++;
+                }}
             }}
 
             startBtn.addEventListener('click', () => {{
@@ -799,14 +811,13 @@ with tab8:
                 startBtn.style.display = 'none';
                 stopBtn.style.display = 'inline-block';
                 
+                isPlaying = true;
                 index = 0;
-                speakAndDisplay();
-                timerId = setInterval(speakAndDisplay, intervalMs);
+                playLoop();
             }});
 
             stopBtn.addEventListener('click', () => {{
-                clearInterval(timerId);
-                clearTimeout(timeoutId);
+                isPlaying = false;
                 window.speechSynthesis.cancel();
                 startBtn.style.display = 'inline-block';
                 stopBtn.style.display = 'none';
@@ -816,6 +827,7 @@ with tab8:
         </script>
         """
         st.components.v1.html(html_code, height=350)
+        
 # ============================================================
 # TAB 9: SAVED
 # ============================================================
