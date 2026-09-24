@@ -749,15 +749,12 @@ with tab7:
         if st.button("✨ この画像から単語を抽出する", type="primary"):
             with st.spinner("Geminiが画像を解析して単語を抽出中..."):
                 try:
-                    # 画像をPIL形式で開く
                     img = Image.open(image_to_process)
-                    
-                    # 学習言語の判定
                     target_lang = "英語" if lang == 'en' else "ドイツ語"
                     
-                    # Geminiモデルの呼び出し (既存の初期設定済みのgenaiを使用)
                     import google.generativeai as genai
-                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    # モデル名を gemini-2.5-flash に修正
+                    model = genai.GenerativeModel("gemini-2.5-flash")
                     
                     prompt = f"""
                     この画像に含まれる{target_lang}の単語を抽出し、以下のJSON形式の配列でのみ出力してください。
@@ -770,7 +767,6 @@ with tab7:
                     
                     response = model.generate_content([prompt, img])
                     
-                    # JSONデータのクリーニング
                     result_text = response.text.strip()
                     if result_text.startswith("```json"):
                         result_text = result_text[7:]
