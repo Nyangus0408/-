@@ -14,6 +14,59 @@ import re
 import requests
 from gtts import gTTS
 from PIL import Image
+import libsql_experimental as libsql
+
+# ==========================================
+# データベース（Turso）接続・操作用の関数群
+# ==========================================
+def get_db_connection():
+    url = st.secrets.get("TURSO_DATABASE_URL")
+    token = st.secrets.get("TURSO_AUTH_TOKEN")
+    if not url or not token:
+        st.error("⚠️ Streamlit Secrets にTursoの接続情報が設定されていません。")
+        st.stop()
+    return libsql.connect(database=url, auth_token=token)
+
+def init_db():
+    try:
+        conn = get_db_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vocabulary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT NOT NULL,
+                meaning TEXT NOT NULL,
+                example TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"データベースの初期化エラー: {e}")
+
+def save_words_to_turso(word_list):
+    conn = get_db_connection()
+    count = 0
+    for item in word_list:
+        conn.execute(
+            "INSERT INTO vocabulary (word, meaning, example) VALUES (?, ?, ?)",
+            (item.get("word", ""), item.get("meaning", ""), item.get("example", ""))
+        )
+        count += 1
+    conn.commit()
+    conn.close()
+    return count
+
+def load_words_from_turso():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT word, meaning, example FROM vocabulary ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"word": row[0], "meaning": row[1], "example": row[2]} for row in rows]
+
+# アプリ起動時にテーブルがなければ作成する
+init_db()
 
 try:
     from pypdf import PdfReader
@@ -839,7 +892,15 @@ with tab7:
             st.info("保存できる単語データがありません")
             
     st.divider()
+    
+# ※以下は、画像解析が完了して単語リスト(ここでは extracted_words とします)が存在する処理の中に追記します。
 
+st.subheader("クラウドDBへプール")
+if st.button("💾 この単語リストをクラウドDBに保存する"):
+    with st.spinner("データベースに保存中..."):
+        saved_count = save_words_to_turso(extracted_words)
+        st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
+        
     # ----------------------------------------------------
     # ② 画像・カメラからの取り込み＆単語変換機能
     # ----------------------------------------------------
@@ -1136,6 +1197,27 @@ with tab8:
         """
         st.components.v1.html(html_code, height=650)
         
+        st.subheader("クラウドDBからの単語読み込み")
+
+# ボタンを押してDBから最新の単語リストを取得
+if st.button("🔄 クラウドDBから単語をロード"):
+    with st.spinner("データを取得中..."):
+        db_words = load_words_from_turso()
+        
+    if db_words:
+        st.session_state["flashcard_words"] = db_words
+        st.success(f"クラウドDBから {len(db_words)} 件の単語を読み込みました！")
+    else:
+        st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
+
+# セッションに単語データがあればフラッシュカードを表示
+if "flashcard_words" in st.session_state and st.session_state["flashcard_words"]:
+    words = st.session_state["flashcard_words"]
+    
+    # ----------------------------------------------------
+    # ※ここに既存のフラッシュカード表示のコード（次へ/前へボタンなど）を配置します
+    # ----------------------------------------------------
+    
 # ============================================================
 # TAB 9: SAVED (クラウド対応版)
 # ============================================================
