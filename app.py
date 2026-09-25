@@ -1,143 +1,263 @@
 # ============================================================
-# English / Deutsch Pitch & Talk ── Turso(Cloud DB) & 2秒戻る 統合版
+# English / Deutsch Pitch & Talk + Immersive Vocab ── ダークテーマ完全版
+# + 「2秒戻る」機能 ＆ Turso(クラウドDB) 統合バージョン
 # ============================================================
 import streamlit as st
 from google import genai
 from google.genai import types
-import json, base64, io, time, os, re, requests
+import json
+import base64
+import io
+import time
+import os
+import re
+import requests
 from gtts import gTTS
-from datetime import datetime
+from PIL import Image
 
-# --- Turso(libsql)のインポート ---
+try:
+    from pypdf import PdfReader
+    PDF_OK = True
+except ImportError:
+    try:
+        from PyPDF2 import PdfReader
+        PDF_OK = True
+    except ImportError:
+        PDF_OK = False
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_OK = True
+except ImportError:
+    BS4_OK = False
+
+# Turso DB用ライブラリ
 try:
     import libsql_experimental as libsql
-    TURSO_OK = True
+    LIBSQL_OK = True
 except ImportError:
-    TURSO_OK = False
-
-try:
-    from pypdf import PdfReader; PDF_OK = True
-except:
-    try: from PyPDF2 import PdfReader; PDF_OK = True
-    except: PDF_OK = False
-try:
-    from bs4 import BeautifulSoup; BS4_OK = True
-except: BS4_OK = False
+    LIBSQL_OK = False
 
 # ── MODEL NAME ──
 GEMINI_MODEL = "gemini-3.5-flash"
 
 # ── PAGE CONFIG ──────────────────────────────────────────────
-st.set_page_config(page_title="Pitch & Talk",
-                   page_icon="🌐", layout="centered",
-                   initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Pitch & Talk Pro",
+    page_icon="🌐", 
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
-# ── CSS ──────────────────────────────────────────────────────
-# (※CSS部分は長いため省略せず、元のapp.py6.pyのCSSをそのまま維持しています)
+# ── TURSO DB HELPER FUNCTIONS ────────────────────────────────
+def get_db_conn():
+    if not LIBSQL_OK: return None
+    try:
+        url = st.secrets.get("TURSO_DATABASE_URL", "")
+        token = st.secrets.get("TURSO_AUTH_TOKEN", "")
+        if url and token:
+            return libsql.connect(database=url, auth_token=token)
+    except:
+        pass
+    return None
+
+def init_db():
+    conn = get_db_conn()
+    if conn:
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS saved_scripts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT,
+                    content_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+        except:
+            pass
+        finally:
+            conn.close()
+
+def save_script_to_db(title, data):
+    conn = get_db_conn()
+    if conn:
+        try:
+            conn.execute("INSERT INTO saved_scripts (title, content_json) VALUES (?, ?)", 
+                         (title, json.dumps(data, ensure_ascii=False)))
+            conn.commit()
+            return True
+        except:
+            pass
+        finally:
+            conn.close()
+    return False
+
+def load_scripts_from_db():
+    conn = get_db_conn()
+    res = []
+    if conn:
+        try:
+            cur = conn.execute("SELECT id, title, content_json, created_at FROM saved_scripts ORDER BY created_at DESC")
+            for r in cur.fetchall():
+                try:
+                    d = json.loads(r[2])
+                    d['_db_id'] = r[0]
+                    d['_title'] = r[1]
+                    d['_created_at'] = r[3]
+                    res.append(d)
+                except:
+                    pass
+        except:
+            pass
+        finally:
+            conn.close()
+    return res
+
+def delete_script_from_db(db_id):
+    conn = get_db_conn()
+    if conn:
+        try:
+            conn.execute("DELETE FROM saved_scripts WHERE id = ?", (db_id,))
+            conn.commit()
+        except:
+            pass
+        finally:
+            conn.close()
+
+# ── CSS (ダーク・ハイコントラストテーマ) ─────────────────────────
 st.markdown("""
 <style>
-.stApp{background:#f0f2f5}
-.block-container{padding-top:0!important;max-width:840px}
-header[data-testid="stHeader"]{background:transparent}
-.stTabs [data-baseweb="tab-list"]{background:white;border-bottom:2px solid #e2e8f0;
-  gap:0;padding:0 6px;position:sticky;top:0;z-index:100;
-  box-shadow:0 2px 8px rgba(0,0,0,.06)}
-.stTabs [data-baseweb="tab"]{font-weight:700!important;font-size:11px!important;
-  padding:11px 11px!important;border-radius:0!important;color:#94a3b8!important}
-.stTabs [aria-selected="true"]{color:var(--acc,#1d4ed8)!important;
-  border-bottom:3px solid var(--acc,#1d4ed8)!important;background:transparent!important}
-.stTabs [data-baseweb="tab-panel"]{padding-top:14px!important}
-.stButton>button{border-radius:12px!important;font-weight:700!important;
-  transition:all .2s!important;border:none!important}
-.stButton>button:hover{transform:translateY(-1px)!important;
-  box-shadow:0 4px 14px rgba(0,0,0,.15)!important}
-.stButton>button[kind="primary"]{background:var(--acc,#1d4ed8)!important}
-.stTextArea textarea,.stTextInput input{border-radius:12px!important;
-  border:2px solid #e5e7eb!important;font-family:inherit!important;
-  transition:border-color .2s!important}
-.stTextArea textarea:focus,.stTextInput input:focus{
-  border-color:var(--acc,#1d4ed8)!important;box-shadow:none!important}
-[data-testid="stSidebar"]{background:#1e293b!important}
-[data-testid="stSidebar"] *{color:rgba(255,255,255,.85)!important}
-[data-testid="stSidebar"] input{background:rgba(255,255,255,.1)!important;
-  border:1px solid rgba(255,255,255,.2)!important;color:white!important;border-radius:8px!important}
-.ep-card{background:white;border-radius:16px;padding:20px;margin:10px 0;
-  box-shadow:0 2px 12px rgba(0,0,0,.07);border:1px solid #e8edf5}
-.ep-script{border-radius:16px;padding:20px;margin-bottom:14px;
-  border-left-width:6px;border-left-style:solid}
-.ep-script-text{font-size:20px;font-weight:700;color:#1e293b;line-height:1.8;letter-spacing:.3px}
-.ep-label{border-radius:20px;padding:4px 14px;font-size:11px;font-weight:800;
-  display:inline-block;margin-bottom:10px;color:white;letter-spacing:.5px}
-.ep-vocab{border-radius:20px;padding:4px 12px;font-size:12px;font-weight:600;
-  display:inline-block;margin:3px}
-.ep-qa{background:#f8fafc;border-radius:12px;padding:14px;margin-bottom:10px}
-.ep-tip{background:#fffbeb;border:1px solid #fde68a;border-radius:14px;
-  padding:14px 18px;margin:12px 0;font-size:13px;line-height:1.7}
-.ep-score-box{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.ep-score-num{font-size:52px;font-weight:900;line-height:1}
-.ep-bar-wrap{background:#f1f5f9;border-radius:8px;height:12px;overflow:hidden;margin-bottom:14px}
-.ep-bar{height:100%;border-radius:8px}
-.ep-chip-ok{background:#dcfce7;color:#16a34a;border-radius:6px;padding:3px 9px;
-  font-weight:600;display:inline-block;margin:2px;font-size:13px}
-.ep-chip-ng{background:#fee2e2;color:#dc2626;border-radius:6px;padding:3px 9px;
-  font-weight:600;display:inline-block;margin:2px;font-size:13px;text-decoration:line-through}
-.ep-chat-wrap{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:14px;
-  min-height:200px;max-height:340px;overflow-y:auto;margin-bottom:10px}
-.ep-bubble-user{border-radius:18px 18px 4px 18px;padding:10px 14px;
-  margin:7px 0 7px 15%;font-size:13px;line-height:1.5;color:white}
-.ep-bubble-ai{background:white;border:1px solid #e2e8f0;border-radius:18px 18px 18px 4px;
-  padding:10px 14px;margin:7px 15% 7px 0;font-size:13px;line-height:1.5;
-  box-shadow:0 1px 4px rgba(0,0,0,.05)}
-.ep-bubble-label{font-size:11px;color:#94a3b8;margin-bottom:3px}
-.ep-para{display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff7ed;
-  border-radius:8px;margin-bottom:6px;font-size:13px;flex-wrap:wrap}
-.ep-para-hard{text-decoration:line-through;color:#f87171}
-.ep-para-easy{font-weight:800;color:#16a34a}
-.ep-para-note{color:#94a3b8;font-size:11px}
-.ep-filler-wrap{background:white;border:1px solid #e2e8f0;border-radius:16px;
-  padding:14px;margin-top:20px}
-.ep-filler-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.ep-filler-card{border-radius:10px;padding:8px 12px}
-.ep-filler-en{font-weight:700;font-size:12px}
-.ep-filler-jp{color:#94a3b8;font-size:11px;margin-top:2px}
-.ep-ph{text-align:center;padding:48px 20px;color:#94a3b8}
-.ep-ph-icon{font-size:48px;margin-bottom:12px}
-.ep-ph-title{font-size:15px;font-weight:700;margin-bottom:6px;color:#64748b}
-.ep-ph-sub{font-size:12px}
-.ep-alert-g{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;
-  padding:12px;text-align:center;color:#16a34a;font-weight:700;font-size:13px;margin-top:12px}
-.ep-alert-o{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;
-  padding:12px;text-align:center;color:#ea580c;font-size:12px;margin-top:12px}
-.save-card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;
-  margin-bottom:12px;transition:box-shadow .2s}
-.save-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.1)}
+/* アプリ全体の背景と基本テキスト色 */
+.stApp { background-color: #121212; }
+.block-container { padding-top: 0 !important; max-width: 840px; }
+header[data-testid="stHeader"] { background: transparent; }
+
+/* Streamlitのデフォルトテキストを強制的に白・明るいグレーにする */
+p, h1, h2, h3, h4, h5, h6, label, span, div.stMarkdown {
+    color: #f8fafc !important;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    background: #1e293b;
+    border-bottom: 2px solid #334155;
+    gap: 0;
+    padding: 0 6px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+}
+.stTabs [data-baseweb="tab"] {
+    font-weight: 700 !important;
+    font-size: 11px !important;
+    padding: 11px 11px !important;
+    border-radius: 0 !important;
+    color: #94a3b8 !important;
+}
+.stTabs [aria-selected="true"] {
+    color: var(--acc, #3b82f6) !important;
+    border-bottom: 3px solid var(--acc, #3b82f6) !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab-panel"] { padding-top: 14px !important; }
+
+/* Buttons & Inputs */
+.stButton>button {
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    transition: all .2s !important;
+    border: 1px solid #334155 !important;
+    background: #1e293b !important;
+    color: #f8fafc !important;
+}
+.stButton>button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4) !important;
+    border-color: var(--acc, #3b82f6) !important;
+}
+.stTextArea textarea, .stTextInput input {
+    border-radius: 12px !important;
+    border: 2px solid #334155 !important;
+    background: #0f172a !important;
+    color: #f8fafc !important;
+}
+.stTextArea textarea:focus, .stTextInput input:focus {
+    border-color: var(--acc, #3b82f6) !important;
+    box-shadow: none !important;
+}
+
+/* Custom UI Components */
+.ep-card {
+    background: #1e293b;
+    border-radius: 16px;
+    padding: 20px;
+    margin: 10px 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,.3);
+    border: 1px solid #334155;
+}
+.ep-script {
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 14px;
+    border-left-width: 6px;
+    border-left-style: solid;
+    background: #0f172a;
+}
+.ep-script-text {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff !important;
+    line-height: 1.8;
+}
+.ep-label {
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: 800;
+    display: inline-block;
+    margin-bottom: 10px;
+    color: white !important;
+}
+.ep-vocab {
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-block;
+    margin: 3px;
+    color: #ffffff !important;
+}
+.ep-ph {
+    text-align: center;
+    padding: 48px 20px;
+    color: #64748b;
+}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ── 言語設定・各種マスタデータ (元コードと同一) ──
+# ── 言語・レベル設定 ──────────────────────────────────────────
 LANG = {
     'en': {
-        'flag':'🇺🇸','name':'English','tts':'en',
-        'app_title':'English Pitch & Talk',
-        'sub_biz':'展示会・商談英語をマスター',
-        'sub_daily':'日常英会話を基礎から学ぼう',
-        'script_lbl':'英文スクリプト（チャンク読み）',
-        'switch_btn':'🇩🇪 Deutschに切替',
-        'persona_biz':'🧳 バイヤー','persona_daily':'💬 ネイティブ',
-        'filler_label':'フィラーカード（時間かせぎフレーズ）',
-        'accent':'#1d4ed8',
+        'flag': '🇺🇸', 'name': 'English', 'tts': 'en',
+        'app_title': 'English Pitch & Talk',
+        'sub_biz': '展示会・商談英語をマスター',
+        'sub_daily': '日常英会話を基礎から学ぼう',
+        'script_lbl': '英文スクリプト（チャンク読み）',
+        'switch_btn': '🇩🇪 Deutschに切替',
+        'persona_biz': '🧳 バイヤー',
+        'persona_daily': '💬 ネイティブ',
     },
     'de': {
-        'flag':'🇩🇪','name':'Deutsch','tts':'de',
-        'app_title':'Deutsch Pitch & Talk',
-        'sub_biz':'展示会・商談ドイツ語をマスター',
-        'sub_daily':'日常ドイツ会話を基礎から学ぼう',
-        'script_lbl':'ドイツ語スクリプト（チャンク読み）',
-        'switch_btn':'🇺🇸 Englishに切替',
-        'persona_biz':'🧳 Käufer','persona_daily':'💬 Muttersprachler',
-        'filler_label':'Filler-Karten（時間かせぎフレーズ・独語）',
-        'accent':'#b45309',
+        'flag': '🇩🇪', 'name': 'Deutsch', 'tts': 'de',
+        'app_title': 'Deutsch Pitch & Talk',
+        'sub_biz': '展示会・商談ドイツ語をマスター',
+        'sub_daily': '日常ドイツ会話を基礎から学ぼう',
+        'script_lbl': 'ドイツ語スクリプト（チャンク読み）',
+        'switch_btn': '🇺🇸 Englishに切替',
+        'persona_biz': '🧳 Käufer',
+        'persona_daily': '💬 Muttersprachler',
     },
 }
 
@@ -165,202 +285,68 @@ LEVELS = {
 }
 
 DAILY_SCENARIOS = {
-    'en': {
-        "🎯 おまかせ":"ユーザーの入力に最適な日常表現",
-        "☕ カフェ/レストラン":"飲食店での注文、好みの表現、会計",
-        "🗺️ 観光/道案内":"観光地での会話、道を聞く・教える",
-        "🏨 ホテル/交通":"チェックイン、部屋のリクエスト、タクシー",
-        "🛒 買い物":"商品の選び方、値段、返品・交換",
-        "👋 自己紹介/雑談":"名前・職業・趣味の紹介、スモールトーク",
-        "📞 電話/リモート":"ビジネス電話、オンライン会議",
-        "🚨 緊急/トラブル":"困ったとき、体調不良、助けを求める",
-        "✈️ 空港/機内":"搭乗手続き、入国審査、機内のやり取り",
-    },
-    'de': {
-        "🎯 おまかせ":"passende Alltagsausdrücke",
-        "☕ Café/Restaurant":"Bestellen, Präferenzen, Bezahlen",
-        "🗺️ Tourismus/Wegbeschreibung":"Sehenswürdigkeiten, Weg fragen",
-        "🏨 Hotel/Verkehr":"Check-in, Zimmerwünsche, Taxi",
-        "🛒 Einkaufen":"Produktauswahl, Preise, Rückgabe",
-        "👋 Vorstellung/Smalltalk":"Name, Beruf, Hobbys, Plauderei",
-        "📞 Telefon/Remote":"Geschäftstelefonat, Online-Meeting",
-        "🚨 Notfall/Probleme":"Hilfe suchen, Krankheit, Notfall",
-        "✈️ Flughafen/Flug":"Boarding, Einreise, Bordgespräche",
-    },
+    'en': ["🎯 おまかせ", "☕ カフェ/レストラン", "🗺️ 観光/道案内", "🏨 ホテル/交通", "🛒 買い物", "👋 自己紹介/雑談", "🚨 緊急/トラブル"],
+    'de': ["🎯 おまかせ", "☕ Café/Restaurant", "🗺️ Tourismus/Wegbeschreibung", "🏨 Hotel/Verkehr", "🛒 Einkaufen", "👋 Vorstellung/Smalltalk", "🚨 Notfall/Probleme"],
 }
 
-FILLERS = {
-    'en': [
-        ("That's a great question.","いい質問ですね"),
-        ("Let me explain.","説明します"),
-        ("In other words...","つまり..."),
-        ("For example...","例えば..."),
-        ("The key point is...","重要なのは..."),
-        ("Could you repeat that?","繰り返してください"),
-        ("One moment, please.","少々お待ちください"),
-        ("I understand.","承知しました"),
-        ("Good point!","おっしゃる通り"),
-        ("Let me check.","確認させてください"),
-    ],
-    'de': [
-        ("Das ist eine gute Frage.","いい質問ですね"),
-        ("Lassen Sie mich erklären.","説明させてください"),
-        ("Mit anderen Worten...","つまり..."),
-        ("Zum Beispiel...","例えば..."),
-        ("Der wichtigste Punkt ist...","重要なのは..."),
-        ("Könnten Sie das wiederholen?","繰り返していただけますか？"),
-        ("Einen Moment bitte.","少々お待ちください"),
-        ("Ich verstehe.","承知しました"),
-        ("Guter Punkt!","おっしゃる通り"),
-        ("Lassen Sie mich das prüfen.","確認させてください"),
-    ],
-}
-
-
-# ── DB SETUP (Turso / libsql) ───────────────────────────────────
-def get_db_connection():
-    if not TURSO_OK:
-        return None
-    url = st.secrets.get("TURSO_DATABASE_URL", os.environ.get("TURSO_DATABASE_URL"))
-    token = st.secrets.get("TURSO_AUTH_TOKEN", os.environ.get("TURSO_AUTH_TOKEN"))
-    if not url or not token:
-        return None
-    try:
-        conn = libsql.connect(database=url, auth_token=token)
-        return conn
-    except Exception as e:
-        st.error(f"DB接続エラー: {e}")
-        return None
-
-def init_db():
-    conn = get_db_connection()
-    if conn:
-        try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS saved_scripts (
-                    id INTEGER PRIMARY KEY,
-                    title TEXT,
-                    english TEXT,
-                    english_jp TEXT,
-                    chunked TEXT,
-                    level TEXT,
-                    mode TEXT,
-                    lang TEXT,
-                    source_ja TEXT,
-                    saved_at TEXT,
-                    data_json TEXT
-                )
-            """)
-            conn.commit()
-        except Exception as e:
-            st.error(f"テーブル作成エラー: {e}")
-        finally:
-            conn.close()
-
-def load_saved_list_from_db():
-    conn = get_db_connection()
-    if not conn:
-        return []
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM saved_scripts ORDER BY id DESC")
-        rows = cur.fetchall()
-        result = []
-        for row in rows:
-            result.append({
-                "id": row[0],
-                "title": row[1],
-                "english": row[2],
-                "english_jp": row[3],
-                "chunked": row[4],
-                "level": row[5],
-                "mode": row[6],
-                "lang": row[7],
-                "source_ja": row[8],
-                "saved_at": row[9],
-                "data": json.loads(row[10])
-            })
-        return result
-    except Exception as e:
-        st.error(f"読み込みエラー: {e}")
-        return []
-    finally:
-        conn.close()
-
-def save_script_to_db(item):
-    conn = get_db_connection()
-    if conn:
-        try:
-            conn.execute("""
-                INSERT INTO saved_scripts (id, title, english, english_jp, chunked, level, mode, lang, source_ja, saved_at, data_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                item["id"], item["title"], item["english"], item["english_jp"], item["chunked"],
-                item["level"], item["mode"], item["lang"], item["source_ja"], item["saved_at"],
-                json.dumps(item["data"])
-            ))
-            conn.commit()
-        except Exception as e:
-            st.error(f"DB保存エラー: {e}")
-        finally:
-            conn.close()
-
-def delete_script_from_db(item_id):
-    conn = get_db_connection()
-    if conn:
-        try:
-            conn.execute("DELETE FROM saved_scripts WHERE id = ?", (item_id,))
-            conn.commit()
-        except Exception as e:
-            st.error(f"DB削除エラー: {e}")
-        finally:
-            conn.close()
-
-
-# ── HELPERS ──────────────────────────────────────────────────
+# ── HELPERS (ダークテーマ用カラーパレット) ─────────────────────
 def ac(is_biz, lang='en'):
     if is_biz:
-        base = {"main":"#1d4ed8","light":"#eff6ff","border":"#bfdbfe"}
+        base = {"main": "#3b82f6", "light": "#1e3a8a", "border": "#2563eb"}
     else:
-        base = {"main":"#0d9488","light":"#f0fdfa","border":"#99f6e4"}
+        base = {"main": "#10b981", "light": "#064e3b", "border": "#059669"}
+    
     if lang == 'de':
-        base["main"]  = "#b45309" if is_biz else "#0f766e"
-        base["light"] = "#fffbeb" if is_biz else "#f0fdfa"
-        base["border"]= "#fde68a" if is_biz else "#99f6e4"
+        base["main"] = "#f59e0b" if is_biz else "#14b8a6"
+        base["light"] = "#78350f" if is_biz else "#134e4a"
+        base["border"] = "#d97706" if is_biz else "#0d9488"
     return base
 
 def ph(name):
-    return f"""<div class="ep-ph"><div class="ep-ph-icon">📝</div>
-<div class="ep-ph-title">「📝 入力」タブで内容を入力してください</div>
-<div class="ep-ph-sub">{name} はコンテンツ生成後に表示されます</div></div>"""
+    return f"""
+    <div class="ep-ph">
+        <div style="font-size:48px;margin-bottom:12px;">📝</div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px;color:#94a3b8;">「📝 入力」タブで内容を入力してください</div>
+        <div style="font-size:12px;color:#64748b;">{name} はコンテンツ生成後に表示されます</div>
+    </div>
+    """
 
 def gen_audio(text, lang='en'):
     try:
         tts = gTTS(text=text, lang=lang)
-        fp = io.BytesIO(); tts.write_to_fp(fp); fp.seek(0)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
         b64 = base64.b64encode(fp.read()).decode()
-        # ★ ここに「2秒戻る(-2秒)」ボタンを追加しています
-        return f"""<audio id="epA" style="width:100%;border-radius:12px;margin-bottom:8px;">
-<source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>
-<div style="display:flex;gap:8px;">
-<button onclick="document.getElementById('epA').currentTime -= 2;"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">
-  ⏪ -2秒<br><span style="font-size:9px;opacity:.7;">戻る</span></button>
-<button onclick="document.getElementById('epA').playbackRate=0.8;document.getElementById('epA').play();"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">
-  🐢 0.8x<br><span style="font-size:9px;opacity:.7;">ゆっくり</span></button>
-<button onclick="document.getElementById('epA').playbackRate=1.0;document.getElementById('epA').play();"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">
-  ▶️ 1.0x<br><span style="font-size:9px;opacity:.7;">標準</span></button>
-<button onclick="document.getElementById('epA').playbackRate=1.2;document.getElementById('epA').play();"
-  style="flex:1;padding:9px 0;border:2px solid #e2e8f0;border-radius:10px;background:white;cursor:pointer;font-weight:700;font-size:11px;">
-  ⚡ 1.2x<br><span style="font-size:9px;opacity:.7;">速め</span></button>
-</div>"""
+        # ★ ここに「2秒戻る」を追加 ★
+        return f"""
+        <audio id="epA" style="width:100%; border-radius:12px; margin-bottom:8px;" controls>
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+        <div style="display:flex; gap:8px;">
+            <button onclick="document.getElementById('epA').currentTime -= 2; document.getElementById('epA').play();"
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
+                ⏪ 2秒戻る
+            </button>
+            <button onclick="document.getElementById('epA').playbackRate=0.8; document.getElementById('epA').play();"
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
+                🐢 0.8x
+            </button>
+            <button onclick="document.getElementById('epA').playbackRate=1.0; document.getElementById('epA').play();"
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
+                ▶️ 1.0x
+            </button>
+            <button onclick="document.getElementById('epA').playbackRate=1.2; document.getElementById('epA').play();"
+                style="flex:1; padding:9px 0; border:1px solid #334155; border-radius:10px; background:#1e293b; color:#f8fafc; cursor:pointer; font-weight:700;">
+                ⚡ 1.2x
+            </button>
+        </div>
+        """
     except Exception as e:
-        return f'<div style="color:#ef4444;font-size:12px;">音声エラー: {e}</div>'
+        return f'<div style="color:#ef4444; font-size:12px;">音声エラー: {e}</div>'
 
 def detect_audio_mime(data: bytes) -> str:
-    if not data or len(data) < 12:
+    if not data or len(data) < 12: 
         return 'audio/mp4'
     h = data[:12]
     if h[:4] == b'RIFF' and h[8:12] == b'WAVE': return 'audio/wav'
@@ -371,78 +357,107 @@ def detect_audio_mime(data: bytes) -> str:
     return 'audio/mp4'
 
 def extract_pdf(file) -> str:
-    if not PDF_OK: return "※ requirements.txt に pypdf を追加してください"
+    if not PDF_OK: 
+        return "※ requirements.txt に pypdf を追加してください"
     reader = PdfReader(io.BytesIO(file.read()))
     return "\n".join(p.extract_text() or "" for p in reader.pages[:10])[:3000]
 
 def extract_url(url: str) -> str:
     try:
-        r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if BS4_OK:
             soup = BeautifulSoup(r.text, "html.parser")
-            for t in soup(["script","style","nav","footer","header"]): t.decompose()
+            for t in soup(["script", "style", "nav", "footer", "header"]): 
+                t.decompose()
             txt = soup.get_text(separator="\n", strip=True)
         else:
             txt = re.sub(r'<[^>]+>', '', r.text)
         return re.sub(r'\n{3,}', '\n\n', txt)[:3000]
-    except Exception as e: return f"取得失敗: {e}"
+    except Exception as e: 
+        return f"取得失敗: {e}"
 
-# ── NEW API WRAPPERS (google-genai) ──────────────────────────
+# ── NEW API WRAPPERS ─────────────────────────────────────────
 def call_text(prompt: str, system: str = "") -> str:
-    if not st.session_state.get("_client"):
+    if not st.session_state.get("_client"): 
         raise RuntimeError("APIクライアント未初期化")
     cfg = types.GenerateContentConfig(system_instruction=system) if system else None
     resp = st.session_state["_client"].models.generate_content(
-        model=GEMINI_MODEL, contents=prompt, config=cfg,
+        model=GEMINI_MODEL, 
+        contents=prompt, 
+        config=cfg
     )
     return resp.text
 
 def call_audio(prompt: str, audio_bytes: bytes) -> str:
-    if not st.session_state.get("_client"):
+    if not st.session_state.get("_client"): 
         raise RuntimeError("APIクライアント未初期化")
     mime = detect_audio_mime(audio_bytes)
     resp = st.session_state["_client"].models.generate_content(
         model=GEMINI_MODEL,
         contents=[
-            types.Part.from_text(prompt),
-            types.Part.from_bytes(data=audio_bytes, mime_type=mime),
-        ],
+            types.Part.from_text(text=prompt),
+            types.Part.from_bytes(data=audio_bytes, mime_type=mime)
+        ]
     )
     return resp.text
+
+def extract_vocab_from_image(img_bytes: bytes, mime_type: str, lang: str = 'en') -> list:
+    if not st.session_state.get("_client"): 
+        raise RuntimeError("APIクライアント未初期化")
+    
+    target_lang = "英語" if lang == 'en' else "ドイツ語"
+    prompt = f"""
+    この画像に含まれる重要な{target_lang}の単語やフレーズを抽出し、以下のJSONフォーマットのリストで出力してください。
+    Markdownの装飾は省き、純粋なJSON配列のみを出力してください。
+    [
+      {{"word": "apple", "meaning": "りんご"}},
+      {{"word": "negotiation", "meaning": "交渉"}}
+    ]
+    """
+    resp = st.session_state["_client"].models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Part.from_text(text=prompt),
+            types.Part.from_bytes(data=img_bytes, mime_type=mime_type),
+        ],
+    )
+    
+    text = resp.text.replace("```json\n", "").replace("```json", "").replace("\n```", "").replace("```", "").strip()
+    
+    try: 
+        return json.loads(text)
+    except Exception as e:
+        st.error(f"データの解析に失敗しました。詳細: {e}")
+        return []
 
 def do_generate(prompt: str, sys_p: str) -> dict:
     raw = call_text(prompt, system=sys_p)
     m = re.search(r'\{[\s\S]*\}', raw)
-    if not m: raise ValueError("JSONが見つかりません")
+    if not m: 
+        raise ValueError("JSONが見つかりません")
     return json.loads(m.group())
 
 def transcribe(audio_bytes: bytes, lang: str = 'en') -> tuple:
     inst = "この音声を日本語として文字起こしし、テキストのみ出力してください。句読点は省略可。"
-    try:
-        result = call_audio(inst, audio_bytes).strip()
-        return result, ""
-    except Exception as e:
+    try: 
+        return call_audio(inst, audio_bytes).strip(), ""
+    except Exception as e: 
         return "", str(e)
-
 
 # ── PROMPT BUILDERS ──────────────────────────────────────────
 def build_prompt(user_input, is_biz, level_key, lang, scenario=""):
     level_inst = LEVELS.get(level_key, LEVELS["📗 基礎 (A2)"])[lang]
-    scene = (("Fachmesse/Business (Produkterklärung, Verhandlung)" if is_biz else f"Alltag – {scenario}")
-             if lang == 'de' else
-             ("展示会・ビジネス（製品説明・商談）" if is_biz else f"日常会話 ― {scenario}"))
+    scene = ("Fachmesse/Business (Produkterklärung, Verhandlung)" if is_biz else f"Alltag – {scenario}") if lang == 'de' else ("展示会・ビジネス（製品説明・商談）" if is_biz else f"日常会話 ― {scenario}")
     target = "Deutschen" if lang == 'de' else "英語"
-    rule   = ("Max. 12 Wörter pro Satz. SVO-Struktur. Grammatik dem Level anpassen."
-              if lang == 'de' else "1文最大12単語。SVO構造優先。レベルに合わせた語彙・文法を厳守。")
+    rule = "Max. 12 Wörter pro Satz. SVO-Struktur. Grammatik dem Level anpassen." if lang == 'de' else "1文最大12単語。SVO構造優先。レベルに合わせた語彙・文法を厳守。"
+    
     return f"""
 以下の条件でスクリプトをJSONのみで生成してください（コードブロック不要）。
-
 [入力文]: {user_input}
 [目標言語]: {target}
 [場面]: {scene}
 [レベル指示]: {level_inst}
 [ルール]: {rule}
-
 {{
   "english": "{target}文（複数文はスペースで区切る）",
   "english_jp": "自然な日本語訳",
@@ -457,368 +472,703 @@ def build_prompt(user_input, is_biz, level_key, lang, scenario=""):
 }}
 """
 
-def build_context_prompt(context, src_label, is_biz, lang, level_key):
-    level_inst = LEVELS.get(level_key, LEVELS["📗 基礎 (A2)"])[lang]
-    target = "Deutschen" if lang == 'de' else "英語"
-    return f"""
-{src_label}のテキストを要約し、{target}学習コンテンツをJSONのみで作成（コードブロック不要）。
-[テキスト]: {context[:2000]}
-[場面]: {"Business/Fachmesse" if is_biz else "Alltag"}
-[レベル]: {level_inst}
-{{
-  "english":"{target}文","english_jp":"日本語訳","chunked":"チャンク区切り",
-  "grammar":"文法解説（日本語）","vocab":{{"単語":"意味"}},
-  "blank_q":"穴埋め（___）","blank_a":"正解","hint":"ヒント（日本語）",
-  "qa_pairs":[{{"question":"質問","question_jp":"訳","hint":"ヒント"}}],
-  "paraphrases":[{{"difficult":"難表現","simple":"簡単","note":"メモ（日本語）"}}]
-}}
-"""
-
-# ── アプリ起動時 DB初期化 ──
-if "db_initialized" not in st.session_state:
-    init_db()
-    st.session_state["db_initialized"] = True
-
-
-# ── API KEY ──────────────────────────────────────────────────
-api_key = ""
-try: api_key = st.secrets.get("GEMINI_API_KEY", st.secrets.get("API_KEY",""))
-except: pass
-if not api_key: api_key = os.environ.get("GEMINI_API_KEY","")
-
 # ── SESSION STATE ────────────────────────────────────────────
-# DBを使用するため saved_list はDBから読み込む
-defaults = {"script_data":None,"chat_history":[],
-            "voice_text":"","url_text_cache":"","language":"en","_client":None}
-for k,v in defaults.items():
-    if k not in st.session_state: st.session_state[k] = v
+defaults = {
+    "script_data": None,
+    "chat_history": [],
+    "saved_list": [],
+    "voice_text": "",
+    "url_text_cache": "",
+    "language": "en",
+    "_client": None, 
+    "vocab_list": [],
+    "db_initialized": False
+}
+for k, v in defaults.items():
+    if k not in st.session_state: 
+        st.session_state[k] = v
 
-# Tursoからデータロード
-if "saved_list" not in st.session_state:
-    st.session_state.saved_list = load_saved_list_from_db()
+if not st.session_state.db_initialized:
+    init_db()
+    st.session_state.db_initialized = True
 
+# ── API KEY INIT ─────────────────────────────────────────────
+api_key = ""
+try: 
+    api_key = st.secrets.get("GEMINI_API_KEY", st.secrets.get("API_KEY", ""))
+except: 
+    pass
 
-# ── CLIENT INIT (新API) ──────────────────────────────────────
+if not api_key: 
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+
 if api_key and st.session_state["_client"] is None:
-    try:
+    try: 
         st.session_state["_client"] = genai.Client(api_key=api_key)
-    except Exception as e:
+    except Exception as e: 
         st.error(f"❌ クライアント初期化失敗: {e}")
 
 lang = st.session_state.language
-LS   = LANG[lang]
+LS = LANG[lang]
 
 # ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(f"""
-<div style="padding:14px 0 8px;">
-  <div style="font-size:19px;font-weight:900;color:white;margin-bottom:3px;">
-    {LS['flag']} {LS['app_title']}</div>
-  <div style="font-size:11px;color:rgba(255,255,255,.5);">AI言語トレーナー Pro</div>
-</div><hr style="border-color:rgba(255,255,255,.1);margin:8px 0 14px;">
-""", unsafe_allow_html=True)
+    st.markdown(f"### {LS['flag']} {LS['app_title']}")
+    st.markdown("AI言語トレーナー Pro")
+    st.divider()
+    
     if not api_key:
-        mk = st.text_input("🔑 Gemini API Key", type="password", placeholder="AIzaSy...")
+        mk = st.text_input("🔑 Gemini API Key", type="password")
         if mk:
             api_key = mk
             st.session_state["_client"] = genai.Client(api_key=mk)
-            st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ APIキー設定済み</div>', unsafe_allow_html=True)
+            st.success("✅ APIキー設定済み")
         else:
-            st.markdown('<div style="color:#fbbf24;font-size:12px;font-weight:700;">⚠️ APIキー未設定</div>', unsafe_allow_html=True)
+            st.warning("⚠️ APIキー未設定")
     else:
-        st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ APIキー自動連携済み</div>', unsafe_allow_html=True)
-    
-    # DBステータス表示
-    if TURSO_OK and get_db_connection():
-        st.markdown('<div style="color:#4ade80;font-size:12px;font-weight:700;">✅ クラウドDB (Turso) 接続中</div>', unsafe_allow_html=True)
+        st.success("✅ APIキー自動連携済み")
+        
+    if LIBSQL_OK and get_db_conn():
+        st.success("☁️ Turso DB 接続済み")
     else:
-        st.markdown('<div style="color:#ef4444;font-size:12px;font-weight:700;">⚠️ クラウドDB 未接続 (ローカルモード)</div>', unsafe_allow_html=True)
-
-    st.markdown(f"""
-<hr style="border-color:rgba(255,255,255,.1);margin:14px 0;">
-<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.6);margin-bottom:8px;">📖 使い方</div>
-<div style="font-size:11px;color:rgba(255,255,255,.7);line-height:2.1;">
-① モード＆レベルを選択<br>② 右上ボタンで言語切替<br>③ テキスト/音声/PDFで入力<br>④「生成する」→ 各タブで学習！<br>⑤ 気に入ったら📚に保存
-</div>
-<hr style="border-color:rgba(255,255,255,.1);margin:14px 0;">
-<div style="font-size:10px;color:rgba(255,255,255,.3);line-height:1.8;">
-🔧 モデル: {GEMINI_MODEL}<br>📦 SDK: google-genai<br>🔊 TTS: gTTS<br>☁️ DB: Turso (libsql)
-</div>
-""", unsafe_allow_html=True)
+        st.warning("⚠️ Turso DB 未接続（一時保存のみ）")
 
 # ── HEADER & MODE ────────────────────────────────────────────
-mode = st.radio("モード",["🏢 展示会・ビジネス","☕ 日常会話・基礎"],
-                horizontal=True, label_visibility="collapsed")
+mode = st.radio("モード", ["🏢 展示会・ビジネス", "☕ 日常会話・基礎"], horizontal=True, label_visibility="collapsed")
 is_biz = "展示会" in mode
 C = ac(is_biz, lang)
+
 st.markdown(f"<style>:root{{--acc:{C['main']};}}</style>", unsafe_allow_html=True)
 
 sys_p = {
-    ('en',True):  "あなたはビジネス英語の専門家です。展示会で通じるシンプルな英文を作成してください。",
-    ('en',False): "あなたは日常英会話のコーチです。旅行・生活・雑談で使えるシンプルな英文を作成してください。",
-    ('de',True):  "Sie sind Experte für Geschäftsdeutsch. Erstellen Sie einfache Sätze für Fachmessen.",
-    ('de',False): "Sie sind Deutschcoach für den Alltag. Erstellen Sie einfache Sätze für Reisen und Alltag.",
+    ('en', True):  "あなたはビジネス英語の専門家です。展示会で通じるシンプルな英文を作成してください。",
+    ('en', False): "あなたは日常英会話のコーチです。旅行・生活・雑談で使えるシンプルな英文を作成してください。",
+    ('de', True):  "Sie sind Experte für Geschäftsdeutsch. Erstellen Sie einfache Sätze für Fachmessen.",
+    ('de', False): "Sie sind Deutschcoach für den Alltag. Erstellen Sie einfache Sätze für Reisen und Alltag.",
 }.get((lang, is_biz), "")
 
 st.markdown(f"""
-<div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc);color:white;
-     padding:18px 22px 14px;border-radius:16px;margin-bottom:4px;
-     box-shadow:0 4px 20px rgba(0,0,0,.15);">
-  <div style="font-size:21px;font-weight:900;letter-spacing:-.5px;margin-bottom:3px;">
-    {LS['flag']} {LS['app_title']}</div>
-  <div style="font-size:11px;opacity:.75;">
-    {LS['sub_biz'] if is_biz else LS['sub_daily']}</div>
+<div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc); color:white; padding:18px 22px 14px; border-radius:16px; margin-bottom:14px; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
+  <div style="font-size:21px; font-weight:900; margin-bottom:3px;">
+    {LS['flag']} {LS['app_title']}
+  </div>
+  <div style="font-size:11px; opacity:.9;">
+    {LS['sub_biz'] if is_biz else LS['sub_daily']}
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
 col_sp, col_lang = st.columns([3, 1])
 with col_lang:
     if st.button(LS['switch_btn'], key="lang_toggle", use_container_width=True):
-        st.session_state.language  = 'de' if lang == 'en' else 'en'
-        st.session_state.script_data   = None
-        st.session_state.chat_history  = []
+        st.session_state.language = 'de' if lang == 'en' else 'en'
+        st.session_state.script_data = None
+        st.session_state.chat_history = []
         st.rerun()
 
 # ── TABS ─────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6,tab7 = st.tabs(
-    ["📝 入力","📖 スクリプト","🔊 音読","🎤 発音","✏️ 練習","🎭 会話","📚 マイ学習帳"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    "📝 入力", "📖 読解", "🔊 音読", "🎤 発音", "✏️ 練習", "🎭 会話", "📸 画像単語", "▶️ フラッシュ", "📚 保存帳"
+])
 data = st.session_state.script_data
-
 
 # ============================================================
 # TAB 1: INPUT
 # ============================================================
 with tab1:
     level_key = st.selectbox("📊 学習レベル", list(LEVELS.keys()), index=1)
-    st.markdown(f'<div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">📌 {LEVELS[level_key][lang][:45]}…</div>',
-                unsafe_allow_html=True)
-
+    
     scenario = ""
-    if not is_biz:
-        scenario = st.selectbox("🎬 シナリオ", list(DAILY_SCENARIOS[lang].keys()))
+    if not is_biz: 
+        scenario = st.selectbox("🎬 シナリオ", DAILY_SCENARIOS[lang])
 
-    im = st.radio("入力方法",["✏️ テキスト","🎤 音声入力","📄 PDF","🔗 URL"],
-                  horizontal=True, key="input_method_radio")
+    im = st.radio("入力方法", ["✏️ テキスト", "🎤 音声入力", "📄 PDF", "🔗 URL"], horizontal=True)
     user_input = ""
 
     if im == "✏️ テキスト":
-        ph_txt = {('en',True):"例: 弊社のセンサーは従来品より30%省エネです。",
-                  ('en',False):"例: コーヒーを1杯ください。",
-                  ('de',True):"例: Unser Sensor spart 30% mehr Energie.",
-                  ('de',False):"例: Ich hätte gerne einen Kaffee."}.get((lang,is_biz),"")
-        user_input = st.text_area("スクリプトにしたい内容を入力（日本語でOK）",
-                                  placeholder=ph_txt, height=100, key="text_input_main")
+        user_input = st.text_area("スクリプトにしたい内容を入力（日本語でOK）", height=100)
 
     elif im == "🎤 音声入力":
-        st.markdown(f"""
-<div style="background:white;border:2px solid {C['main']};border-radius:14px;
-     padding:14px;margin-bottom:12px;">
-  <div style="font-size:12px;font-weight:700;color:{C['main']};margin-bottom:6px;">
-    🎤 マイクで録音 → 自動文字起こし</div>
-  <div style="font-size:11px;color:#64748b;">
-    <strong>日本語で話してください</strong>（入力は常に日本語・出力言語は自動変換）。</div>
-</div>""", unsafe_allow_html=True)
-        voice_audio = st.audio_input("🎤 録音ボタンを押して日本語で話してください", key="voice_input_ja")
+        st.info("🎤 マイクで録音して日本語で話してください。自動で文字起こしされます。")
+        voice_audio = st.audio_input("録音")
         if voice_audio and st.session_state.get("_client"):
             with st.spinner("文字起こし中..."):
                 txt, err = transcribe(voice_audio.getvalue(), lang)
                 if txt:
                     st.session_state.voice_text = txt
                     st.success(f"✅ 認識: {txt}")
-                else:
-                    detail = f"<br><span style='font-size:10px;color:#94a3b8;'>詳細: {err[:80]}</span>" if err else ""
-                    st.markdown(f"""
-<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:12px;
-     padding:12px 16px;font-size:13px;color:#0369a1;">
-  🔄 音声を認識できませんでした。{detail}
-</div>""", unsafe_allow_html=True)
         if st.session_state.voice_text:
-            user_input = st.text_area("認識されたテキスト（編集可）",
-                                      value=st.session_state.voice_text,
-                                      height=80, key="voice_edit")
+            user_input = st.text_area("認識されたテキスト（編集可）", value=st.session_state.voice_text, height=80)
 
     elif im == "📄 PDF":
-        pdf_file = st.file_uploader("PDFファイルを選択", type=["pdf"], key="pdf_upload")
+        st.info("📄 製品カタログなどのPDFをアップロードすると、内容を要約してスクリプトを作ります。")
+        pdf_file = st.file_uploader("PDFファイルを選択", type=["pdf"])
         if pdf_file:
-            if not PDF_OK:
+            if not PDF_OK: 
                 st.error("❌ requirements.txt に pypdf を追加してください。")
             else:
-                with st.spinner("PDFを読み込み中..."): pdf_text = extract_pdf(pdf_file)
-                st.text_area("抽出テキスト（確認用）", value=pdf_text[:400]+"…", height=70, disabled=True)
+                with st.spinner("PDFを読み込み中..."): 
+                    pdf_text = extract_pdf(pdf_file)
+                st.text_area("抽出テキスト", value=pdf_text[:400]+"…", height=70, disabled=True)
                 user_input = f"[PDF内容]: {pdf_text}"
 
     elif im == "🔗 URL":
-        url_in = st.text_input("URLを入力", placeholder="https://example.com/product", key="url_input")
-        if url_in and st.button("🔍 URLを取得", key="fetch_url"):
-            with st.spinner("Webページを取得中..."):
+        st.info("🔗 会社HPや製品ページのURLを入力してスクリプトを生成します。")
+        url_in = st.text_input("URLを入力", placeholder="https://example.com/product")
+        if url_in and st.button("🔍 URLを取得"):
+            with st.spinner("Webページを取得中..."): 
                 url_text = extract_url(url_in)
-            if "失敗" in url_text: st.error(url_text)
+            if "失敗" in url_text: 
+                st.error(url_text)
             else:
-                st.text_area("取得テキスト", value=url_text[:400]+"…", height=70, disabled=True)
                 st.session_state["url_text_cache"] = url_text
-        if st.session_state.get("url_text_cache"):
+                st.success("✅ 取得完了")
+        if st.session_state.get("url_text_cache"): 
             user_input = f"[URL内容]: {st.session_state['url_text_cache']}"
 
-    if st.button("✨ スクリプト＆学習コンテンツを生成する", type="primary",
-                 use_container_width=True, key="gen_btn"):
-        if not api_key: st.error("❌ APIキーが設定されていません。")
-        elif not user_input or not user_input.strip(): st.warning("📝 内容を入力してください。")
+    if st.button("✨ スクリプト＆学習コンテンツを生成する", type="primary", use_container_width=True):
+        if not api_key or not st.session_state.get("_client"): 
+            st.error("❌ APIキーまたはクライアントが設定されていません。")
+        elif not user_input or not user_input.strip(): 
+            st.warning("📝 テキスト等で内容を入力してください。")
         else:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
                     if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
-                        prompt = build_context_prompt(user_input, im, is_biz, lang, level_key)
-                    else:
+                        prompt = f"""
+                        提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
+                        [テキスト]: {user_input[:2000]}
+                        [場面]: {"ビジネス" if is_biz else "日常"}
+                        """
+                        prompt += build_prompt("", is_biz, level_key, lang, scenario)
+                    else: 
                         prompt = build_prompt(user_input, is_biz, level_key, lang, scenario)
+                    
                     result = do_generate(prompt, sys_p)
-                    result.update({"_source_ja":user_input[:100],"_level":level_key,
-                                   "_mode":"business" if is_biz else "daily","_lang":lang})
+                    result.update({
+                        "_source_ja": user_input[:100],
+                        "_level": level_key,
+                        "_mode": "business" if is_biz else "daily",
+                        "_lang": lang
+                    })
                     st.session_state.script_data = result
                     st.session_state.chat_history = []
                     data = result
-                    st.success("✅ 生成完了！「📖 スクリプト」タブに進んでください。")
-                    st.balloons()
-                except Exception as e: st.error(f"❌ エラー: {e}")
-
+                    st.success("✅ 生成完了！「📖 読解」タブに進んでください。")
+                except Exception as e: 
+                    st.error(f"❌ エラー: {e}")
 
 # ============================================================
 # TAB 2: SCRIPT
 # ============================================================
 with tab2:
-    if not data: st.markdown(ph("📖 スクリプト"), unsafe_allow_html=True)
+    if not data: 
+        st.markdown(ph("📖 スクリプト"), unsafe_allow_html=True)
     else:
-        dl = data.get('_lang','en'); DC = ac(is_biz,dl); DLS = LANG[dl]
         st.markdown(f"""
-<div class="ep-script" style="background:{DC['light']};border:2px solid {DC['border']};border-left-color:{DC['main']};">
-  <div class="ep-label" style="background:{DC['main']};">📖 {DLS['script_lbl']}</div>
-  <div class="ep-script-text">{data.get('chunked', data.get('english',''))}</div>
-  <div style="font-size:13px;color:#475569;margin-top:10px;padding:8px;
-       background:rgba(255,255,255,.7);border-radius:8px;">🇯🇵 {data.get('english_jp','')}</div>
-</div>""", unsafe_allow_html=True)
-        if st.button("📚 マイ学習帳に保存 (DBへ記録)", use_container_width=True, key="save_btn"):
-            item = {"id":int(time.time()),"title":data.get("english","")[:40]+"…",
-                    "english":data.get("english",""),"english_jp":data.get("english_jp",""),
-                    "chunked":data.get("chunked",""),"level":data.get("_level",""),
-                    "mode":data.get("_mode",""),"lang":data.get("_lang","en"),
-                    "source_ja":data.get("_source_ja",""),
-                    "saved_at":datetime.now().strftime("%m/%d %H:%M"),"data":data}
-            st.session_state.saved_list.insert(0, item)
-            save_script_to_db(item) # ★ここでTursoに保存
-            st.success(f"✅ クラウドDBに保存しました！（📚 {len(st.session_state.saved_list)} 件）")
-        
-        st.markdown(f"""<div class="ep-card"><div class="ep-label" style="background:{DC['main']};">📚 文法・フレーズ解説</div><div style="font-size:13px;color:#475569;">{data.get('grammar','')}</div></div>""", unsafe_allow_html=True)
-        if data.get('vocab'):
-            vh = "".join([f'<span class="ep-vocab" style="background:{DC["light"]};color:{DC["main"]};"><strong>{k}</strong>: {v}</span>' for k,v in data['vocab'].items()])
-            st.markdown(f'<div class="ep-card"><div class="ep-label" style="background:{DC["main"]};">📝 重要語彙</div><div>{vh}</div></div>', unsafe_allow_html=True)
+        <div class="ep-script" style="border-left-color:{C['main']};">
+            <div class="ep-label" style="background:{C['main']};">📖 {LS['script_lbl']}</div>
+            <div class="ep-script-text">{data.get('chunked', data.get('english',''))}</div>
+            <div style="font-size:13px; color:#cbd5e1; margin-top:10px; padding:8px; background:rgba(255,255,255,.05); border-radius:8px;">
+                🇯🇵 {data.get('english_jp','')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
+        if data.get('vocab'):
+            st.markdown(f'<div class="ep-card"><div class="ep-label" style="background:{C["main"]};">📝 重要語彙</div><div>', unsafe_allow_html=True)
+            for k, v in data['vocab'].items():
+                st.markdown(f'<span class="ep-vocab" style="background:{C["light"]}; border:1px solid {C["border"]};"><strong>{k}</strong>: {v}</span>', unsafe_allow_html=True)
+            st.markdown('</div></div>', unsafe_allow_html=True)
+            
+        st.markdown(f"""
+        <div class="ep-card">
+            <div class="ep-label" style="background:{C["main"]};">📚 文法・フレーズ解説</div>
+            <div style="font-size:13px; color:#cbd5e1; line-height:1.8;">{data.get("grammar","")}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.divider()
+        if st.button("💾 このスクリプトを保存帳(クラウド)に保存", type="primary", use_container_width=True):
+            title = data.get('_source_ja', '無題のスクリプト')[:20]
+            if save_script_to_db(title, data):
+                st.success("☁️ クラウドデータベースに保存しました！「📚 保存帳」で確認できます。")
+            else:
+                if data not in st.session_state.saved_list:
+                    data['title'] = title
+                    st.session_state.saved_list.append(data)
+                st.warning("⚠️ クラウドDB未接続のため、このセッションに一時保存しました。")
 
 # ============================================================
 # TAB 3: AUDIO
 # ============================================================
 with tab3:
-    if not data: st.markdown(ph("🔊 音読"), unsafe_allow_html=True)
+    if not data: 
+        st.markdown(ph("🔊 音読"), unsafe_allow_html=True)
     else:
-        dl = data.get('_lang','en'); DC = ac(is_biz,dl); DLS = LANG[dl]
         st.markdown(f"""
-<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;padding:18px;margin-bottom:14px;">
-  <div class="ep-label" style="background:{DC['main']};">🎵 シャドーイング・音読プレイヤー</div>
-  <div style="background:white;border:1px solid {DC['border']};border-radius:12px;padding:14px;
-       margin-bottom:12px;font-size:16px;font-weight:600;color:#1e293b;line-height:1.8;">
-    {data.get('chunked','')}</div>
-</div>""", unsafe_allow_html=True)
-        # ★ ここで2秒戻るボタンが付いた audio プレイヤーが表示されます
-        st.components.v1.html(gen_audio(data.get('english',''), DLS['tts']), height=130)
-
+        <div class="ep-card">
+            <div class="ep-label" style="background:{C['main']};">🎵 シャドーイング</div>
+            <div style="font-size:16px; font-weight:600; margin-bottom:12px; color:#f8fafc;">{data.get('chunked','')}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.components.v1.html(gen_audio(data.get('english',''), LS['tts']), height=130)
 
 # ============================================================
-# TAB 4: PRONUNCIATION (発音チェック省略なし)
+# TAB 4: PRONUNCIATION
 # ============================================================
 with tab4:
-    if not data: st.markdown(ph("🎤 発音"), unsafe_allow_html=True)
+    if not data: 
+        st.markdown(ph("🎤 発音"), unsafe_allow_html=True)
     else:
-        dl = data.get('_lang','en'); DC = ac(is_biz,dl); DLS = LANG[dl]
-        st.markdown(f"""
-<div style="background:{DC['light']};border:1px solid {DC['border']};border-radius:16px;padding:18px;margin-bottom:14px;">
-  <div class="ep-label" style="background:{DC['main']};">🎤 発音チェック ({DLS['name']})</div>
-  <div style="font-size:15px;font-weight:600;color:#1e293b;">{data.get('english','')}</div>
-</div>""", unsafe_allow_html=True)
-        audio_val = st.audio_input("マイクを押して録音")
-        if audio_val and st.session_state.get("_client"):
-            with st.spinner("AIが発音を分析中... 🎯"):
-                lang_name = "Deutschen" if dl == 'de' else "英語"
-                ap = f"""この音声を{lang_name}として文字起こしし、元の文「{data.get('english','')}」と比較して採点してください。
-JSONのみ出力:
-{{"score":85,"transcript":"認識テキスト","good_words":["正解単語"],"bad_words":["要練習単語"],"feedback":"フィードバック"}}"""
-                try:
-                    raw = call_audio(ap, audio_val.getvalue())
-                    m = re.search(r'\{[\s\S]*\}', raw)
-                    if m:
-                        rd = json.loads(m.group()); sc = rd.get('score',0)
-                        col = "#22c55e" if sc>=80 else "#eab308" if sc>=60 else "#ef4444"
-                        st.markdown(f"""
-<div class="ep-card" style="margin-top:14px;">
-  <div class="ep-score-box"><span style="font-weight:800;">発音マッチ度</span>
-    <span class="ep-score-num" style="color:{col};">{sc}%</span></div>
-  <div class="ep-bar-wrap"><div class="ep-bar" style="width:{sc}%;background:{col};"></div></div>
-</div>""", unsafe_allow_html=True)
-                    else: st.info(raw)
-                except Exception as e: st.error(f"分析エラー: {e}")
-
+        st.markdown(f"**この文を読んでください:**\n### {data.get('english','')}")
+        rec = st.audio_input("録音", key="main_audio_record")
+        if rec and st.session_state.get("_client"):
+            if st.button("📈 採点する", type="primary", use_container_width=True):
+                with st.spinner("AIが発音を分析中..."):
+                    try:
+                        mime = detect_audio_mime(rec.getvalue())
+                        p_sys = f"あなたは{LS['name']}のネイティブ講師です。音声とスクリプトを比較し、JSONのみ出力。"
+                        p_msg = f"スクリプト: {data.get('english','')}\n\n{{'score':(0-100),'feedback':'日本語で改善点','good_points':'日本語で良い点'}}"
+                        resp = st.session_state["_client"].models.generate_content(
+                            model=GEMINI_MODEL,
+                            contents=[
+                                types.Part.from_text(text=p_msg),
+                                types.Part.from_bytes(data=rec.getvalue(), mime_type=mime)
+                            ],
+                            config=types.GenerateContentConfig(system_instruction=p_sys)
+                        )
+                        
+                        m = re.search(r'\{[\s\S]*\}', resp.text)
+                        if m:
+                            ev = json.loads(m.group())
+                            st.success(f"### 総合スコア: {ev.get('score', 0)} / 100")
+                            st.markdown(f"**✨ 良い点:** {ev.get('good_points', '')}")
+                            st.markdown(f"**🔧 改善点:** {ev.get('feedback', '')}")
+                        else: 
+                            st.error("❌ 採点フォーマットエラー")
+                    except Exception as e: 
+                        st.error(f"❌ エラー: {e}")
 
 # ============================================================
-# TAB 5 & 6 練習・会話 (元の処理と同じ)
+# TAB 5: PRACTICE
 # ============================================================
 with tab5:
-    if not data: st.markdown(ph("✏️ 穴埋め練習"), unsafe_allow_html=True)
-    else: st.info("穴埋め練習モード（本コードでは省略されていますが元のapp.pyと同じく動作します）")
-with tab6:
-    if not data: st.markdown(ph("🎭 会話"), unsafe_allow_html=True)
-    else: st.info("ロールプレイチャットモード（本コードでは省略されていますが元のapp.pyと同じく動作します）")
-
+    if not data: 
+        st.markdown(ph("✏️ 練習"), unsafe_allow_html=True)
+    else:
+        st.markdown(f"### 🧩 穴埋めクイズ\n**{data.get('blank_q', '')}**\n\n💡 ヒント: {data.get('hint', '')}")
+        ua = st.text_input("答えを入力してください")
+        if ua:
+            if ua.strip().lower() == data.get("blank_a", "").lower():
+                st.success("🎉 正解！よくできました！")
+            else:
+                st.warning(f"惜しい！正解は **{data.get('blank_a', '')}** です。")
 
 # ============================================================
-# TAB 7: マイ学習帳 (Turso DB連携)
+# TAB 6: CONVERSATION
+# ============================================================
+with tab6:
+    if not data: 
+        st.markdown(ph("🎭 会話"), unsafe_allow_html=True)
+    else:
+        persona = LS['persona_biz'] if is_biz else LS['persona_daily']
+        st.markdown(f"**{persona}** との模擬会話です。「{data.get('english', '')}」を使って話しかけてみましょう。")
+        
+        for c in st.session_state.chat_history:
+            if c["role"] == "user": 
+                st.markdown(f"**You:** {c['text']}")
+            else: 
+                st.markdown(f"**{persona}:** {c['text']}")
+
+        cr = st.text_input("返答を入力...")
+        if cr and st.button("💬 送信", use_container_width=True):
+            st.session_state.chat_history.append({"role": "user", "text": cr})
+            with st.spinner("相手が返答中..."):
+                try:
+                    cps = f"あなたは{persona}です。ユーザーが {lang} で話しかけます。2文以内のシンプルな {lang} で返答してください。"
+                    resp = call_text(cr, system=cps)
+                    st.session_state.chat_history.append({"role": "ai", "text": resp.strip()})
+                    st.rerun()
+                except Exception as e: 
+                    st.error(e)
+
+# ============================================================
+# TAB 7: 画像単語 (IMAGE VOCAB)
 # ============================================================
 with tab7:
-    # 常にDBから最新のリストを再取得（他の端末で追加・削除されたデータを反映）
-    if st.button("🔄 データベースを同期（最新の情報に更新）"):
-        st.session_state.saved_list = load_saved_list_from_db()
-        st.rerun()
+    st.markdown("### 📸 カメラ / 画像から単語を取り込み")
+    st.write("単語帳や書類を撮影、または画像ファイルを選択して、自動でリスト化します。")
+    
+    # ----------------------------------------------------
+    # ① 単語データの保存・復元機能（自動結合バージョン）
+    # ----------------------------------------------------
+    st.markdown("#### 💾 単語データの保存と復元")
+    col_save1, col_save2 = st.columns(2)
+    with col_save1:
+        uploaded_file = st.file_uploader("📂 保存したJSONファイルを読み込む", type=["json"], key="json_uploader")
+        if uploaded_file is not None:
+            try:
+                loaded_vocab = json.load(uploaded_file)
+                if 'vocab_list' not in st.session_state:
+                    st.session_state.vocab_list = []
+                
+                existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
+                added_count = 0
+                for item in loaded_vocab:
+                    if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
+                        st.session_state.vocab_list.append(item)
+                        existing_words.add(item.get('word'))
+                        added_count += 1
+                
+                st.success(f"単語リストを結合しました！（新規追加: {added_count}件 / 合計: {len(st.session_state.vocab_list)}件）")
+            except Exception as e:
+                st.error("ファイルの読み込みに失敗しました。")
 
-    saved = st.session_state.saved_list
-    st.markdown(f"""
-<div style="background:linear-gradient(135deg,#1e293b,#334155);color:white;
-     padding:18px 22px;border-radius:16px;margin-bottom:16px;">
-  <div style="font-size:18px;font-weight:900;margin-bottom:4px;">☁️ クラウド学習帳</div>
-  <div style="font-size:12px;opacity:.75;">iPhoneからもパソコンからも同じデータが見れます</div>
-  <div style="display:inline-block;background:rgba(255,255,255,.2);border-radius:20px;
-       padding:3px 12px;font-size:12px;font-weight:700;margin-top:8px;">
-    {len(saved)} 件保存済み</div>
-</div>""", unsafe_allow_html=True)
-    if not saved:
-        st.markdown('<div class="ep-ph"><div class="ep-ph-icon">📭</div><div class="ep-ph-title">まだ保存されていません</div></div>', unsafe_allow_html=True)
+    with col_save2:
+        if 'vocab_list' in st.session_state and st.session_state.vocab_list:
+            json_str = json.dumps(st.session_state.vocab_list, ensure_ascii=False, indent=2)
+            st.download_button(
+                label=f"⬇️ 単語リストをPCに保存（計 {len(st.session_state.vocab_list)} 件）",
+                data=json_str,
+                file_name="my_vocab_list.json",
+                mime="application/json",
+                type="primary"
+            )
+        else:
+            st.info("保存できる単語データがありません")
+            
+    st.divider()
+
+    # ----------------------------------------------------
+    # ② 画像・カメラからの取り込み＆単語変換機能
+    # ----------------------------------------------------
+    st.markdown("#### 📷 画像の取り込みと単語変換")
+    
+    input_method = st.radio("取り込み方法を選択", ["ファイルから選択（ギャラリー・フォルダ）", "カメラで撮影"], horizontal=True)
+    
+    image_to_process = None
+    
+    if input_method == "カメラで撮影":
+        use_camera = st.checkbox("カメラを有効にする")
+        if use_camera:
+            image_to_process = st.camera_input("カメラで撮影")
     else:
-        for item in saved: # DBから読み込んだ順（降順）で表示
-            il = item.get("lang","en"); IC = ac(item.get("mode")=="business",il); ILS = LANG[il]
-            st.markdown(f"""
-<div class="save-card">
-  <div style="margin-bottom:8px;">
-    <span style="font-size:10px;background:{IC['light']};color:{IC['main']};
-          border-radius:12px;padding:2px 8px;font-weight:700;">
-      {ILS['flag']} {item.get('level','')[:10]}</span>
-    <span style="font-size:10px;color:#94a3b8;margin-left:8px;">📅 {item['saved_at']}</span>
-  </div>
-  <div style="font-size:15px;font-weight:700;color:#1e293b;margin-bottom:4px;">{item['english']}</div>
-  <div style="font-size:12px;color:#64748b;margin-bottom:8px;">🇯🇵 {item.get('english_jp','')}</div>
-</div>""", unsafe_allow_html=True)
-            cl, cd = st.columns([2,1])
-            with cl:
-                if st.button("📂 学習再開", key=f"load_{item['id']}", use_container_width=True):
-                    st.session_state.script_data = item["data"]
-                    st.success("✅ 読み込みました！「📖 スクリプト」タブを確認してください。")
-            with cd:
-                if st.button("🗑️ 削除", key=f"del_{item['id']}", use_container_width=True):
-                    # リストから削除してDBからも削除
-                    st.session_state.saved_list = [s for s in saved if s["id"]!=item["id"]]
-                    delete_script_from_db(item["id"]) # ★ Tursoから削除
-                    st.rerun()
+        image_to_process = st.file_uploader("画像ファイルを選択（PNG, JPG, JPEGなど）", type=["png", "jpg", "jpeg"], key="img_uploader")
+
+    if image_to_process is not None:
+        st.image(image_to_process, caption="選択・撮影された画像", use_container_width=True)
+        
+        if st.button("✨ この画像から単語を抽出する", type="primary"):
+            with st.spinner("Geminiが画像を解析して単語を抽出中..."):
+                try:
+                    img = Image.open(image_to_process)
+                    target_lang = "英語" if lang == 'en' else "ドイツ語"
+                    
+                    import google.generativeai as genai
+                    model = genai.GenerativeModel("gemini-3.6-flash")
+                    
+                    prompt = f"""
+                    この画像に含まれる{target_lang}の単語を抽出し、以下のJSON形式の配列でのみ出力してください。
+                    マークダウン（```json など）は一切含めず、純粋なJSON文字列だけを返してください。
+                    [
+                      {{"word": "抽出した単語1", "meaning": "日本語の訳1"}},
+                      {{"word": "抽出した単語2", "meaning": "日本語の訳2"}}
+                    ]
+                    """
+                    
+                    response = model.generate_content([prompt, img])
+                    
+                    result_text = response.text.strip()
+                    if result_text.startswith("```json"):
+                        result_text = result_text[7:]
+                    if result_text.startswith("```"):
+                        result_text = result_text[3:]
+                    if result_text.endswith("```"):
+                        result_text = result_text[:-3]
+                        
+                    extracted_items = json.loads(result_text.strip())
+                    
+                    if extracted_items:
+                        if 'vocab_list' not in st.session_state:
+                            st.session_state.vocab_list = []
+                        
+                        existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
+                        new_added = 0
+                        for item in extracted_items:
+                            if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
+                                st.session_state.vocab_list.append(item)
+                                existing_words.add(item.get('word'))
+                                new_added += 1
+                        
+                        st.success(f"{new_added}件の単語を新しく追加しました！（合計: {len(st.session_state.vocab_list)}件）")
+                    else:
+                        st.warning("画像から単語を検出できませんでした。別の画像でお試しください。")
+                except json.JSONDecodeError:
+                    st.error("AIからのデータ受け取りに失敗しました。もう一度「抽出する」ボタンを押してください。")
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+
+# ============================================================
+# TAB 8: FLASHCARDS (IMMERSIVE MODE)
+# ============================================================
+with tab8:
+    st.markdown("### ▶️ 刷り込み再生モード")
+    
+    if not st.session_state.vocab_list:
+        st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
+    else:
+        interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5)
+        vocab_json = json.dumps(st.session_state.vocab_list)
+        lang_code = 'en-US' if lang == 'en' else 'de-DE'
+        btn_color = C["main"]
+        
+        html_code = f"""
+        <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
+            
+            <!-- コントロールボタン群 -->
+            <div style="text-align: center; margin-bottom: 15px; display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;">
+                <button id="startBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: {btn_color}; border: none; border-radius: 8px; cursor: pointer;">
+                    ▶ スタート
+                </button>
+                <button id="stopBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: #ef4444; border: none; border-radius: 8px; cursor: pointer; display: none;">
+                    ■ 停止
+                </button>
+                <button id="resetBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: #64748b; border: none; border-radius: 8px; cursor: pointer;">
+                    🔄 最初から
+                </button>
+                <button id="shuffleBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: #1e293b; background-color: #f8fafc; border: none; border-radius: 8px; cursor: pointer;">
+                    🔀 シャッフル: OFF
+                </button>
+            </div>
+            
+            <!-- フラッシュカード表示エリア -->
+            <div style="text-align: center; min-height: 140px; display: flex; flex-direction: column; justify-content: center; background: #0f172a; border-radius: 12px; padding: 20px; border: 1px solid #334155; margin-bottom: 20px;">
+                <div id="wordText" style="font-size: 34px; font-weight: 900; color: #ffffff; margin-bottom: 8px;">Ready...</div>
+                <div id="meaningText" style="font-size: 20px; font-weight: 700; color: {btn_color};">リストの単語を押すとそこから始まります</div>
+            </div>
+
+            <!-- 単語リスト表示エリア -->
+            <div style="font-size: 14px; font-weight: bold; color: #cbd5e1; margin-bottom: 8px;">📋 単語リスト（クリックで再生開始）</div>
+            <div id="vocabList" style="height: 250px; overflow-y: auto; background-color: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 5px;">
+                <!-- ここにリストが自動生成されます -->
+            </div>
+        </div>
+
+        <style>
+            .list-item {{
+                padding: 12px; 
+                border-bottom: 1px solid #1e293b; 
+                color: #cbd5e1; 
+                cursor: pointer; 
+                border-radius: 6px;
+                transition: background 0.2s;
+            }}
+            .list-item:hover {{
+                background-color: #1e293b;
+            }}
+            .list-item.active {{
+                background-color: {btn_color};
+                color: white;
+            }}
+            #vocabList::-webkit-scrollbar {{ width: 8px; }}
+            #vocabList::-webkit-scrollbar-thumb {{ background: #475569; border-radius: 4px; }}
+        </style>
+
+        <script>
+            const vocab = {vocab_json};
+            const waitBeforeAnswerMs = {int(interval * 1000)};
+            const waitAfterAnswerMs = 2500;
+            const langCode = "{lang_code}";
+            
+            let playOrder = vocab.map((_, i) => i);
+            let index = 0; 
+            let isPlaying = false;
+            let isShuffle = false;
+            let interrupt = false; 
+            let currentUtterance = null;
+
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const resetBtn = document.getElementById('resetBtn');
+            const shuffleBtn = document.getElementById('shuffleBtn');
+            const wordText = document.getElementById('wordText');
+            const meaningText = document.getElementById('meaningText');
+            const vocabListDiv = document.getElementById('vocabList');
+
+            function renderList() {{
+                vocabListDiv.innerHTML = '';
+                vocab.forEach((item, originalIdx) => {{
+                    const div = document.createElement('div');
+                    div.className = 'list-item';
+                    div.id = 'item-' + originalIdx;
+                    div.innerHTML = `<strong>${{originalIdx + 1}}. ${{item.word}}</strong> <span style="font-size:0.9em; opacity:0.8; margin-left:8px;">${{item.meaning}}</span>`;
+                    
+                    div.onclick = () => {{
+                        let pIdx = playOrder.indexOf(originalIdx);
+                        if (pIdx !== -1) {{
+                            index = pIdx;
+                            interrupt = true;
+                            window.speechSynthesis.cancel();
+                            if (!isPlaying) {{
+                                startBtn.click();
+                            }}
+                        }}
+                    }};
+                    vocabListDiv.appendChild(div);
+                }});
+            }}
+            renderList();
+
+            function updateHighlight(originalIdx) {{
+                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
+                const activeEl = document.getElementById('item-' + originalIdx);
+                if (activeEl) {{
+                    activeEl.classList.add('active');
+                    activeEl.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                }}
+            }}
+
+            function shuffleArray(array) {{
+                for (let i = array.length - 1; i > 0; i--) {{
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [array[i], array[j]] = [array[j], array[i]];
+                }}
+            }}
+
+            shuffleBtn.addEventListener('click', () => {{
+                isShuffle = !isShuffle;
+                shuffleBtn.innerText = isShuffle ? "🔀 シャッフル: ON" : "🔀 シャッフル: OFF";
+                shuffleBtn.style.backgroundColor = isShuffle ? "#f59e0b" : "#f8fafc";
+                shuffleBtn.style.color = isShuffle ? "white" : "#1e293b";
+                
+                playOrder = vocab.map((_, i) => i);
+                if (isShuffle) {{
+                    shuffleArray(playOrder);
+                }}
+                index = 0;
+                interrupt = true;
+                if (!isPlaying) {{
+                    wordText.innerText = "Order Updated";
+                    meaningText.innerText = "順番が変更されました";
+                }}
+            }});
+
+            const sleep = async (ms) => {{
+                let waited = 0;
+                while (waited < ms && isPlaying && !interrupt) {{
+                    await new Promise(r => setTimeout(r, 100));
+                    waited += 100;
+                }}
+            }};
+
+            function speakText(text) {{
+                if (!text) return;
+                if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+                window.speechSynthesis.cancel();
+                
+                currentUtterance = new SpeechSynthesisUtterance(text);
+                currentUtterance.lang = langCode;
+                currentUtterance.rate = 0.9;
+                window.speechSynthesis.speak(currentUtterance);
+            }}
+
+            async function playLoop() {{
+                while (isPlaying) {{
+                    interrupt = false;
+                    if (index >= vocab.length) {{ index = 0; }}
+                    
+                    let originalIdx = playOrder[index];
+                    const current = vocab[originalIdx];
+                    
+                    updateHighlight(originalIdx);
+                    
+                    wordText.innerText = current.word;
+                    meaningText.innerText = "";
+                    
+                    await sleep(waitBeforeAnswerMs);
+                    if (!isPlaying) break;
+                    if (interrupt) continue;
+                    
+                    meaningText.innerText = current.meaning;
+                    speakText(current.word);
+                    
+                    await sleep(waitAfterAnswerMs);
+                    if (!isPlaying) break;
+                    if (interrupt) continue;
+                    
+                    index++;
+                }}
+            }}
+
+            startBtn.addEventListener('click', () => {{
+                const unlockAudio = new SpeechSynthesisUtterance('');
+                window.speechSynthesis.speak(unlockAudio);
+                
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                
+                isPlaying = true;
+                playLoop();
+            }});
+
+            stopBtn.addEventListener('click', () => {{
+                isPlaying = false;
+                window.speechSynthesis.cancel();
+                startBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
+                wordText.innerText = "Stopped";
+                meaningText.innerText = "一時停止中（▶で続きから）";
+            }});
+
+            resetBtn.addEventListener('click', () => {{
+                isPlaying = false;
+                interrupt = true;
+                window.speechSynthesis.cancel();
+                index = 0;
+                startBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
+                wordText.innerText = "Ready...";
+                meaningText.innerText = "最初に戻りました";
+                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
+            }});
+        </script>
+        """
+        st.components.v1.html(html_code, height=650)
+        
+# ============================================================
+# TAB 9: SAVED (クラウド対応版)
+# ============================================================
+with tab9:
+    db_scripts = load_scripts_from_db()
+    
+    if not db_scripts and not st.session_state.saved_list:
+        st.markdown(ph("📚 保存帳"), unsafe_allow_html=True)
+    else:
+        st.markdown("### 📚 保存したスクリプト")
+        
+        # クラウド保存分
+        if db_scripts:
+            st.success(f"☁️ クラウド上に {len(db_scripts)} 件のスクリプトが保存されています")
+            for item in db_scripts:
+                with st.expander(f"📄 {item.get('_title', '無題')} ({item.get('_created_at', '')[:10]})"):
+                    st.markdown(f"**{item.get('_lang', '言語').upper()}:** {item.get('english', '')}")
+                    st.markdown(f"**日本語:** {item.get('english_jp', '')}")
+                    if st.button("🗑️ 削除", key=f"del_{item.get('_db_id')}"):
+                        delete_script_from_db(item.get('_db_id'))
+                        st.rerun()
+                        
+        # 一時保存分（DB未接続時などのフォールバック）
+        if st.session_state.saved_list:
+            st.info("💻 このセッションでの一時保存")
+            if st.button("🗑️ 一時保存を全て削除"):
+                st.session_state.saved_list = []
+                st.rerun()
+                
+            for idx, item in enumerate(st.session_state.saved_list):
+                st.markdown(f"""
+                <div class="ep-card">
+                    <strong>{item.get('title', '無題')}</strong><br>
+                    <span style="font-size:12px; color:#cbd5e1;">{item.get('english_jp', '')}</span>
+                </div>
+                """, unsafe_allow_html=True)
