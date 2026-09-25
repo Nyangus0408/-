@@ -900,7 +900,35 @@ if st.button("💾 この単語リストをクラウドDBに保存する"):
     with st.spinner("データベースに保存中..."):
         saved_count = save_words_to_turso(extracted_words)
         st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
-        
+    st.subheader("📷 画像の取り込みと単語変換")
+
+# 1. 消えてしまったカメラ・ファイル選択UIの復元
+capture_method = st.radio("取り込み方法を選択", ["ファイルから選択 (ギャラリー・フォルダ)", "カメラで撮影"])
+
+if capture_method == "ファイルから選択 (ギャラリー・フォルダ)":
+    uploaded_file = st.file_uploader("画像ファイルを選択 (PNG, JPG, JPEGなど)", type=["png", "jpg", "jpeg"])
+else:
+    uploaded_file = st.camera_input("カメラで撮影")
+
+
+# ==========================================
+# ※ここに既存の「Gemini APIに画像を投げて単語を抽出する処理」が入ります。
+# 抽出結果のリストは st.session_state["extracted_words"] に保存している前提とします。
+# ==========================================
+
+
+# 2. クラウドDBへの保存ボタン（NameErrorの修正）
+# セッションに単語データが存在する場合のみボタンを表示する
+if "extracted_words" in st.session_state and st.session_state["extracted_words"]:
+    st.subheader("クラウドDBへプール")
+    if st.button("💾 この単語リストをクラウドDBに保存する"):
+        with st.spinner("データベースに保存中..."):
+            # セッションステートからデータを直接渡すことでNameErrorを防ぐ
+            saved_count = save_words_to_turso(st.session_state["extracted_words"])
+            st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
+else:
+    st.info("画像を読み込んで単語を抽出すると、ここに保存ボタンが表示されます。")
+    
     # ----------------------------------------------------
     # ② 画像・カメラからの取り込み＆単語変換機能
     # ----------------------------------------------------
