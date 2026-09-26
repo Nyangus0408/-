@@ -884,7 +884,7 @@ with tab6:
     if not data: 
         st.markdown(ph("🎭 会話"), unsafe_allow_html=True)
     else:
-        persona = LS['persona_biz'] if is_biz else LS['persona_daily']
+        persona = f"あなたは親切な{LS['name']}の語学チューターです。ユーザーのレベルに合わせて自然で分かりやすい日本語と{LS['name']}で会話・指導を行ってください。"
         st.markdown(f"**{persona}** との模擬会話です。「{data.get('english', '')}」を使って話しかけてみましょう。")
         
         for c in st.session_state.chat_history:
