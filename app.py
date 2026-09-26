@@ -824,7 +824,7 @@ with tab3:
         st.markdown(f"""
         <div class="ep-card">
             <div class="ep-label" style="background:{C['main']};">🎵 シャドーイング</div>
-            <div style="font-size:16px; font-weight:600; margin-bottom:12px; color:#f8fafc;">{data.get('chunked','')}</div>
+            <div style="font-size:16px; font-weight:600; margin-bottom:12px; color:#f8fafc;">{data.get('english','')}</div>
         </div>
         """, unsafe_allow_html=True)
         st.components.v1.html(gen_audio(data.get('english',''), LS['tts']), height=130)
