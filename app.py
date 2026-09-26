@@ -325,6 +325,7 @@ p, h1, h2, h3, h4, h5, h6, label, span, div.stMarkdown {
 """, unsafe_allow_html=True)
 
 # ── 言語・レベル設定 ──────────────────────────────────────────
+# ── 言語・レベル設定 ──────────────────────────────────────────
 LANG = {
     'en': {
         'flag': '🇺🇸', 'name': 'English', 'tts': 'en',
@@ -332,7 +333,6 @@ LANG = {
         'sub_biz': '展示会・商談英語をマスター',
         'sub_daily': '日常英会話を基礎から学ぼう',
         'script_lbl': '英文スクリプト（チャンク読み）',
-        'switch_btn': '🇩🇪 Deutschに切替',
         'persona_biz': '🧳 バイヤー',
         'persona_daily': '💬 ネイティブ',
     },
@@ -342,9 +342,17 @@ LANG = {
         'sub_biz': '展示会・商談ドイツ語をマスター',
         'sub_daily': '日常ドイツ会話を基礎から学ぼう',
         'script_lbl': 'ドイツ語スクリプト（チャンク読み）',
-        'switch_btn': '🇺🇸 Englishに切替',
         'persona_biz': '🧳 Käufer',
         'persona_daily': '💬 Muttersprachler',
+    },
+    'zh': {
+        'flag': '🇨🇳', 'name': '中文', 'tts': 'zh-CN',
+        'app_title': 'Chinese Pitch & Talk',
+        'sub_biz': '展示会・商談中国語をマスター',
+        'sub_daily': '日常中国語を基礎から学ぼう',
+        'script_lbl': '中国語スクリプト（ピンイン付き）',
+        'persona_biz': '🧳 買家',
+        'persona_daily': '💬 本地人',
     },
 }
 
@@ -352,28 +360,34 @@ LEVELS = {
     "🌱 初学者 (A1)": {
         'en':"be動詞・have・like等の最基本動詞のみ。主語＋動詞の最小構造。5単語以内。",
         'de':"nur sein/haben/mögen. Einfachste Satzstruktur. Maximal 5 Wörter.",
+        'zh':"最も基本的な動詞のみ。主語＋動詞の最小構造。5単語以内。",
     },
     "📗 基礎 (A2)": {
         'en':"中学英語。1文12単語以内。SVO構造のみ。関係代名詞・接続詞禁止。",
         'de':"Grundlegendes Deutsch. Max. 12 Wörter. Einfache SVO-Struktur.",
+        'zh':"基礎的な中国語。1文12単語以内。SVO構造のみ。複雑な接続詞禁止。",
     },
     "📘 中級 (B1/B2)": {
         'en':"高校英語。接続詞（because/when）可。やや複雑な構造OK。",
         'de':"Mittelstufe. Konjunktionen (weil/obwohl) erlaubt.",
+        'zh':"中級。接続詞（因為/雖然）可。やや複雑な構造OK。",
     },
     "📙 上級 (C1)": {
         'en':"ビジネス英語。受動態・完了形・専門用語適宜使用。",
         'de':"Geschäftsdeutsch. Passiv, Konjunktiv II, Fachvokabular erlaubt.",
+        'zh':"ビジネス中国語。専門用語適宜使用。敬語表現含む。",
     },
     "🚀 ネイティブ風": {
         'en':"ネイティブが日常的に使う自然な表現。慣用句・略語も使用可。",
         'de':"Natürliches Deutsch. Idiome und Umgangssprache erlaubt.",
+        'zh':"ネイティブが日常的に使う自然な表現。成語や慣用句も使用可。",
     },
 }
 
 DAILY_SCENARIOS = {
     'en': ["🎯 おまかせ", "☕ カフェ/レストラン", "🗺️ 観光/道案内", "🏨 ホテル/交通", "🛒 買い物", "👋 自己紹介/雑談", "🚨 緊急/トラブル"],
     'de': ["🎯 おまかせ", "☕ Café/Restaurant", "🗺️ Tourismus/Wegbeschreibung", "🏨 Hotel/Verkehr", "🛒 Einkaufen", "👋 Vorstellung/Smalltalk", "🚨 Notfall/Probleme"],
+    'zh': ["🎯 おまかせ", "☕ カフェ/レストラン", "🗺️ 観光/道案内", "🏨 ホテル/交通", "🛒 買い物", "👋 自己紹介/雑談", "🚨 緊急/トラブル"],
 }
 
 # ── HELPERS (ダークテーマ用カラーパレット) ─────────────────────
@@ -535,7 +549,7 @@ def transcribe(audio_bytes: bytes, lang: str = 'en') -> tuple:
 def build_prompt(user_input, is_biz, level_key, lang, scenario=""):
     level_inst = LEVELS.get(level_key, LEVELS["📗 基礎 (A2)"])[lang]
     scene = ("Fachmesse/Business (Produkterklärung, Verhandlung)" if is_biz else f"Alltag – {scenario}") if lang == 'de' else ("展示会・ビジネス（製品説明・商談）" if is_biz else f"日常会話 ― {scenario}")
-    target = "Deutschen" if lang == 'de' else "英語"
+    target = "Deutschen" if lang == 'de' else ("中国語（必ずピンインを付けること）" if lang == 'zh' else "英語")
     rule = "Max. 12 Wörter pro Satz. SVO-Struktur. Grammatik dem Level anpassen." if lang == 'de' else "1文最大12単語。SVO構造優先。レベルに合わせた語彙・文法を厳守。"
     
     return f"""
@@ -644,6 +658,8 @@ sys_p = {
     ('en', False): "あなたは日常英会話のコーチです。旅行・生活・雑談で使えるシンプルな英文を作成してください。",
     ('de', True):  "Sie sind Experte für Geschäftsdeutsch. Erstellen Sie einfache Sätze für Fachmessen.",
     ('de', False): "Sie sind Deutschcoach für den Alltag. Erstellen Sie einfache Sätze für Reisen und Alltag.",
+    ('zh', True):  "あなたはビジネス中国語の専門家です。展示会で通じるシンプルな中国語文を作成し、必ずピンインを併記してください。",
+    ('zh', False): "あなたは日常中国語のコーチです。旅行や雑談で使えるシンプルな中国語文を作成し、必ずピンインを併記してください。",
 }.get((lang, is_biz), "")
 
 st.markdown(f"""
@@ -657,10 +673,23 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-col_sp, col_lang = st.columns([3, 1])
+# ▼▼▼ ボタンをプルダウンメニューに変更 ▼▼▼
+col_sp, col_lang = st.columns([2, 1])
 with col_lang:
-    if st.button(LS['switch_btn'], key="lang_toggle", use_container_width=True):
-        st.session_state.language = 'de' if lang == 'en' else 'en'
+    lang_options = {'en': '🇺🇸 English', 'de': '🇩🇪 Deutsch', 'zh': '🇨🇳 中文'}
+    current_lang = st.session_state.language
+    current_index = list(lang_options.keys()).index(current_lang) if current_lang in lang_options else 0
+    
+    selected_label = st.selectbox(
+        "🌐 言語", 
+        options=list(lang_options.values()),
+        index=current_index,
+        label_visibility="collapsed"
+    )
+    
+    selected_key = [k for k, v in lang_options.items() if v == selected_label][0]
+    if selected_key != current_lang:
+        st.session_state.language = selected_key
         st.session_state.script_data = None
         st.session_state.chat_history = []
         st.rerun()
