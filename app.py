@@ -740,34 +740,33 @@ with tab1:
             user_input = f"[URL内容]: {st.session_state['url_text_cache']}"
 
     if st.button("✨ スクリプト＆学習コンテンツを生成する", type="primary", use_container_width=True):
-        if not api_key or not st.session_state.get("_client"): 
+        if not api_key or not st.session_state.get("_client"):
             st.error("❌ APIキーまたはクライアントが設定されていません。")
-        elif not user_input or not user_input.strip(): 
+        elif not user_input or not user_input.strip():
             st.warning("📝 テキスト等で内容を入力してください。")
         else:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
-               if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
-                    prompt = f"""
-                    提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
-                    [テキスト]: {user_input[:2000]}
-                    """
-                    prompt += build_prompt("", level_key, LEVELS[level_key][lang], lang)
-                else:
-                    # 変数 user_input と、LEVELS辞書から取得したレベル説明を渡す
-                    prompt = build_prompt(user_input, level_key, LEVELS[level_key][lang], lang)
+                    if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
+                        prompt = f"""
+                        提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
+                        [テキスト]: {user_input[:2000]}
+                        """
+                        prompt += build_prompt("", level_key, LEVELS[level_key][lang], lang)
+                    else:
+                        prompt = build_prompt(user_input, level_key, LEVELS[level_key][lang], lang)
 
-                result = do_generate(prompt, sys_p)
-                result.update({
-                    "_source_ja": user_input[:100],
-                    "_level": level_key,
-                    "_mode": "daily",
-                    "_lang": lang
-                })
+                    result = do_generate(prompt, sys_p)
+                    result.update({
+                        "_source_ja": user_input[:100],
+                        "_level": level_key,
+                        "_mode": "daily",
+                        "_lang": lang
+                    })
                     st.session_state.script_data = result
                     st.session_state.chat_history = []
                     data = result
-                    st.success("✅ 生成完了！「📖 読解」タブに進んでください。")
+                    st.success("✔ 生成完了！「📖 読解」タブに進んでください。")
                 except Exception as e: 
                     st.error(f"❌ エラー: {e}")
 
