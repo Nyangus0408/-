@@ -1067,9 +1067,9 @@ with tab8:
     st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
 else:
     interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5, key="slider_word_interval_unique")
-        vocab_json = json.dumps(st.session_state.vocab_list)
-        lang_code = 'en-US' if lang == 'en' else 'de-DE'
-        btn_color = C["main"]
+    vocab_json = json.dumps(st.session_state.vocab_list)
+    lang_code = 'en-US' if lang == 'en' else 'de-DE'
+    btn_color = C["main"]
         
         html_code = f"""
         <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
