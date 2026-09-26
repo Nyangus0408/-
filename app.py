@@ -635,7 +635,7 @@ with st.sidebar:
         st.warning("⚠️ Turso DB 未接続（一時保存のみ）")
 
 # ── HEADER & MODE ────────────────────────────────────────────
-mode = st.radio("モード", ["🏢 展示会・ビジネス", "☕ 日常会話・基礎"], horizontal=True, label_visibility="collapsed")
+
 is_biz = False
 C = ac(is_biz, lang)
 
