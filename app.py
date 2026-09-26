@@ -551,13 +551,16 @@ def build_prompt(topic, level_name, level_desc, lang):
 
 出力は必ず以下のJSONフォーマットのみにしてください。マークダウン(```json)は不要です。
 {{
-  "script": "ターゲット言語の自然なフレーズ",
-  "translation": "日本語訳（チャンクごとに / で区切る）",
-  "words": [
-    {{"word": "単語1", "meaning": "意味1"}},
-    {{"word": "単語2", "meaning": "意味2"}}
-  ],
-  "explanation": "文法やフレーズの簡潔な解説"
+  "english": "{target}の自然なフレーズ",
+  "english_jp": "日本語訳",
+  "vocab": {{
+    "単語1": "意味1",
+    "単語2": "意味2"
+  }},
+  "grammar": "文法やフレーズの簡潔な解説",
+  "blank_q": "{target}フレーズの一部を[___]にした穴埋め問題",
+  "blank_a": "[___]に入る正解の単語",
+  "hint": "穴埋め問題の日本語ヒント"
 }}
 """
 
