@@ -913,12 +913,6 @@ if st.button("💾 この単語リストをクラウドDBに保存する"):
 # 1. 消えてしまったカメラ・ファイル選択UIの復元
 
 
-if capture_method == "ファイルから選択 (ギャラリー・フォルダ)":
-    uploaded_file = st.file_uploader("画像ファイルを選択 (PNG, JPG, JPEGなど)", type=["png", "jpg", "jpeg"])
-else:
-    uploaded_file = st.camera_input("カメラで撮影")
-
-
 # ==========================================
 # ※ここに既存の「Gemini APIに画像を投げて単語を抽出する処理」が入ります。
 # 抽出結果のリストは st.session_state["extracted_words"] に保存している前提とします。
