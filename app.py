@@ -67,7 +67,41 @@ def load_words_from_turso():
 
 # アプリ起動時にテーブルがなければ作成する
 init_db()
+def upgrade_db_for_spaced_repetition():
+    conn = get_db_connection()
+    try:
+        conn.execute("ALTER TABLE vocabulary ADD COLUMN review_count INTEGER DEFAULT 0;")
+        conn.execute("ALTER TABLE vocabulary ADD COLUMN last_reviewed TIMESTAMP;")
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
 
+upgrade_db_for_spaced_repetition()
+
+def load_words_for_review():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, word, meaning, example 
+        FROM vocabulary 
+        ORDER BY last_reviewed ASC NULLS FIRST, review_count ASC
+        LIMIT 10
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"id": row[0], "word": row[1], "meaning": row[2], "example": row[3]} for row in rows]
+
+def update_review_record(word_id):
+    conn = get_db_connection()
+    conn.execute("""
+        UPDATE vocabulary 
+        SET review_count = review_count + 1, last_reviewed = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (word_id,))
+    conn.commit()
+    conn.close()
 try:
     from pypdf import PdfReader
     PDF_OK = True
@@ -569,7 +603,19 @@ with st.sidebar:
     st.markdown(f"### {LS['flag']} {LS['app_title']}")
     st.markdown("AI言語トレーナー Pro")
     st.divider()
-    
+    st.header("⚙️ 学習設定")
+    learning_language = st.selectbox(
+        "学習する言語を選択",
+        ["English (US)", "Deutsch (ドイツ語)", "中文 (中国語・簡体字)"]
+    )
+    st.session_state["learning_language"] = learning_language
+
+    base_system_prompt = f"""
+    あなたはプロの{learning_language}教師です。
+    回答には、自然な{learning_language}の表現を使用してください。
+    ※中国語の場合はピンイン（発音記号）を、ドイツ語・英語の場合は重要なアクセントや発音のコツを必ず添えてください。
+    """
+    st.divider()
     if not api_key:
         mk = st.text_input("🔑 Gemini API Key", type="password")
         if mk:
@@ -899,38 +945,7 @@ with tab7:
         else:
             st.info("保存できる単語データがありません")
             
-    st.divider()
-    
-# ※以下は、画像解析が完了して単語リスト(ここでは extracted_words とします)が存在する処理の中に追記します。
-
-st.subheader("クラウドDBへプール")
-if st.button("💾 この単語リストをクラウドDBに保存する"):
-    with st.spinner("データベースに保存中..."):
-        saved_count = save_words_to_turso(extracted_words)
-        st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
-    st.subheader("📷 画像の取り込みと単語変換")
-
-# 1. 消えてしまったカメラ・ファイル選択UIの復元
-
-
-# ==========================================
-# ※ここに既存の「Gemini APIに画像を投げて単語を抽出する処理」が入ります。
-# 抽出結果のリストは st.session_state["extracted_words"] に保存している前提とします。
-# ==========================================
-
-
-# 2. クラウドDBへの保存ボタン（NameErrorの修正）
-# セッションに単語データが存在する場合のみボタンを表示する
-if "extracted_words" in st.session_state and st.session_state["extracted_words"]:
-    st.subheader("クラウドDBへプール")
-    if st.button("💾 この単語リストをクラウドDBに保存する"):
-        with st.spinner("データベースに保存中..."):
-            # セッションステートからデータを直接渡すことでNameErrorを防ぐ
-            saved_count = save_words_to_turso(st.session_state["extracted_words"])
-            st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
-else:
-    st.info("画像を読み込んで単語を抽出すると、ここに保存ボタンが表示されます。")
-    
+        
     # ----------------------------------------------------
     # ② 画像・カメラからの取り込み＆単語変換機能
     # ----------------------------------------------------
@@ -999,12 +1014,43 @@ else:
                     st.error("AIからのデータ受け取りに失敗しました。もう一度「抽出する」ボタンを押してください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
+                   
+                    st.divider()
+        st.subheader("☁️ クラウドDBへプール")
+        # 既にリストにデータが存在する場合のみ保存ボタンを表示
+        if st.session_state.get('vocab_list'):
+            if st.button("💾 この単語リストをクラウドDBに保存する", use_container_width=True):
+                with st.spinner("データベースに保存中..."):
+                    # アプリ本体で管理されている vocab_list を保存
+                    saved_count = save_words_to_turso(st.session_state.vocab_list)
+                    st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
+        else:
+            st.info("画像を読み込んで単語を抽出すると、ここに保存ボタンが表示されます。")
         
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
     st.markdown("### ▶️ 刷り込み再生モード")
+    st.subheader("☁️ クラウドDBからの単語読み込み")
+    if st.button("🔄 クラウドDBから単語をロード", use_container_width=True):
+        with st.spinner("データを取得中..."):
+            db_words = load_words_from_turso()
+            
+        if db_words:
+            # 取得した単語でセッションのリストを上書きして画面を更新
+            st.session_state.vocab_list = db_words
+            st.success(f"クラウドDBから {len(db_words)} 件の単語を読み込みました！")
+            st.rerun() 
+        else:
+            st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
+    st.divider()
+  
+    # (既存のコードが続く)
+    if not st.session_state.vocab_list:
+        st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
+    else:
+        interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5)
     
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📸 画像単語」タブで単語を追加してください。")
@@ -1225,29 +1271,7 @@ with tab8:
             }});
         </script>
         """
-        st.components.v1.html(html_code, height=650)
-        
-        st.subheader("クラウドDBからの単語読み込み")
 
-# ボタンを押してDBから最新の単語リストを取得
-if st.button("🔄 クラウドDBから単語をロード"):
-    with st.spinner("データを取得中..."):
-        db_words = load_words_from_turso()
-        
-    if db_words:
-        st.session_state["flashcard_words"] = db_words
-        st.success(f"クラウドDBから {len(db_words)} 件の単語を読み込みました！")
-    else:
-        st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
-
-# セッションに単語データがあればフラッシュカードを表示
-if "flashcard_words" in st.session_state and st.session_state["flashcard_words"]:
-    words = st.session_state["flashcard_words"]
-    
-    # ----------------------------------------------------
-    # ※ここに既存のフラッシュカード表示のコード（次へ/前へボタンなど）を配置します
-    # ----------------------------------------------------
-    
 # ============================================================
 # TAB 9: SAVED (クラウド対応版)
 # ============================================================
