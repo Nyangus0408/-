@@ -1060,7 +1060,7 @@ with tab8:
             st.rerun() 
         else:
             st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
-   st.divider()
+  st.divider()
 
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
@@ -1069,8 +1069,8 @@ with tab8:
         vocab_json = json.dumps(st.session_state.vocab_list)
         lang_code = 'en-US' if lang == 'en' else 'de-DE'
         btn_color = C["main"]
-        
-        html_code = f"""
+
+    html_code = f"""
         <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
             
             <!-- コントロールボタン群 -->
