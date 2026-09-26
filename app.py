@@ -850,13 +850,7 @@ with tab6:
 # TAB 7: 画像単語 (IMAGE VOCAB)
 # ============================================================
 with tab7:
-# 1. 省略記号（...）を使わず、ご自身の元のタブ定義コードに戻します
-# ※変数名（tab1など）はご自身の元の設定に合わせてください
-tab_input, tab_read, tab_voice, tab_pronounce, tab_practice, tab_talk, tab_image, tab_flash, tab_save = st.tabs([
-    "入力", "読解", "音読", "発音", "練習", "会話", "画像単語", "フラッシュ", "保存帳"
-])
 
-# 2. その上で、カメラやファイルアップロードの機能は、画像単語のブロック（with）の中にだけ入れます
 with tab_image:
     st.subheader("📷 画像の取り込みと単語変換")
     
