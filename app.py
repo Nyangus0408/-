@@ -1060,7 +1060,7 @@ with tab8:
             st.rerun() 
         else:
             st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
-st.divider()
+　　st.divider()
 
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
