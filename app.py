@@ -748,11 +748,11 @@ with tab1:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
                    if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
-            prompt = f"""
-            提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
-            [テキスト]: {user_input[:2000]}
-            """
-            prompt += build_prompt("", level_key, LEVELS[level_key][lang], lang)
+           　　　　　　 prompt = f"""
+            　　　　　　提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
+            　　　　　　[テキスト]: {user_input[:2000]}
+           　　　　　　 """
+            　　　　　　prompt += build_prompt("", level_key, LEVELS[level_key][lang], lang)
         else:
             # 変数 user_input と、LEVELS辞書から取得したレベル説明を渡す
             prompt = build_prompt(user_input, level_key, LEVELS[level_key][lang], lang)
@@ -761,7 +761,7 @@ with tab1:
         result.update({
             "_source_ja": user_input[:100],
             "_level": level_key,
-            "_mode": "daily",  # ビジネスモードを廃止し daily で固定
+            "_mode": "daily",
             "_lang": lang
         })
                     st.session_state.script_data = result
