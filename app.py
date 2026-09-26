@@ -911,7 +911,7 @@ if st.button("💾 この単語リストをクラウドDBに保存する"):
     st.subheader("📷 画像の取り込みと単語変換")
 
 # 1. 消えてしまったカメラ・ファイル選択UIの復元
-capture_method = st.radio("取り込み方法を選択", ["ファイルから選択 (ギャラリー・フォルダ)", "カメラで撮影"])
+
 
 if capture_method == "ファイルから選択 (ギャラリー・フォルダ)":
     uploaded_file = st.file_uploader("画像ファイルを選択 (PNG, JPG, JPEGなど)", type=["png", "jpg", "jpeg"])
