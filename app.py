@@ -1060,16 +1060,15 @@ with tab8:
             st.rerun() 
         else:
             st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
-    st.divider()
-  
-    # (既存のコードが続く)
- if not st.session_state.vocab_list:
-    st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
-else:
-    interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5, key="slider_word_interval_unique")
-    vocab_json = json.dumps(st.session_state.vocab_list)
-    lang_code = 'en-US' if lang == 'en' else 'de-DE'
-    btn_color = C["main"]
+   st.divider()
+
+    if not st.session_state.vocab_list:
+        st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
+    else:
+        interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5, key="slider_word_interval_unique")
+        vocab_json = json.dumps(st.session_state.vocab_list)
+        lang_code = 'en-US' if lang == 'en' else 'de-DE'
+        btn_color = C["main"]
         
         html_code = f"""
         <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
