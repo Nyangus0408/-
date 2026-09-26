@@ -997,7 +997,21 @@ else:
                     st.error("AIからのデータ受け取りに失敗しました。もう一度「抽出する」ボタンを押してください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
+# 修正イメージ
+tab_read, tab_practice, tab_image, ... = st.tabs(["読解", "練習", "画像単語", ...])
 
+# ❌ 誤った配置（タブの外にあると常に表示される）
+# uploaded_file = st.camera_input(...)
+
+with tab_image:
+    st.subheader("📷 画像の取り込みと単語変換")
+    # ✅ 正しい配置（画像単語タブの中に入れる）
+    capture_method = st.radio("取り込み方法を選択", ["ファイル", "カメラ"])
+    if capture_method == "ファイル":
+        uploaded_file = st.file_uploader("...")
+    else:
+        uploaded_file = st.camera_input("...")
+        
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
