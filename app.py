@@ -325,60 +325,50 @@ p, h1, h2, h3, h4, h5, h6, label, span, div.stMarkdown {
 """, unsafe_allow_html=True)
 
 # ── 言語・レベル設定 ──────────────────────────────────────────
-# ── 言語・レベル設定 ──────────────────────────────────────────
 LANG = {
     'en': {
         'flag': '🇺🇸', 'name': 'English', 'tts': 'en',
-        'app_title': 'English Pitch & Talk',
-        'sub_biz': '展示会・商談英語をマスター',
-        'sub_daily': '日常英会話を基礎から学ぼう',
+        'app_title': 'AI Language Tutor',
+        'subtitle': '日常会話・旅行・基礎学習ツール',
         'script_lbl': '英文スクリプト（チャンク読み）',
-        'persona_biz': '🧳 バイヤー',
-        'persona_daily': '💬 ネイティブ',
     },
     'de': {
         'flag': '🇩🇪', 'name': 'Deutsch', 'tts': 'de',
-        'app_title': 'Deutsch Pitch & Talk',
-        'sub_biz': '展示会・商談ドイツ語をマスター',
-        'sub_daily': '日常ドイツ会話を基礎から学ぼう',
+        'app_title': 'AI Sprachlehrer',
+        'subtitle': '日常会話・旅行・基礎学習ツール',
         'script_lbl': 'ドイツ語スクリプト（チャンク読み）',
-        'persona_biz': '🧳 Käufer',
-        'persona_daily': '💬 Muttersprachler',
     },
     'zh': {
         'flag': '🇨🇳', 'name': '中文', 'tts': 'zh-CN',
-        'app_title': 'Chinese Pitch & Talk',
-        'sub_biz': '展示会・商談中国語をマスター',
-        'sub_daily': '日常中国語を基礎から学ぼう',
+        'app_title': 'AI 语言导师',
+        'subtitle': '日常会話・旅行・基礎学習ツール',
         'script_lbl': '中国語スクリプト（ピンイン付き）',
-        'persona_biz': '🧳 買家',
-        'persona_daily': '💬 本地人',
     },
 }
 
 LEVELS = {
     "🌱 初学者 (A1)": {
-        'en':"be動詞・have・like等の最基本動詞のみ。主語＋動詞の最小構造。5単語以内。",
-        'de':"nur sein/haben/mögen. Einfachste Satzstruktur. Maximal 5 Wörter.",
-        'zh':"最も基本的な動詞のみ。主語＋動詞の最小構造。5単語以内。",
+        'en':"最基本の単語のみ。主語＋動詞の最小構造。5単語以内。",
+        'de':"Einfachste Satzstruktur. Maximal 5 Wörter.",
+        'zh':"最も基本的な単語のみ。主語＋動詞の最小構造。5単語以内。",
     },
     "📗 基礎 (A2)": {
-        'en':"中学英語。1文12単語以内。SVO構造のみ。関係代名詞・接続詞禁止。",
-        'de':"Grundlegendes Deutsch. Max. 12 Wörter. Einfache SVO-Struktur.",
-        'zh':"基礎的な中国語。1文12単語以内。SVO構造のみ。複雑な接続詞禁止。",
+        'en':"基礎的な表現。1文12単語以内。シンプルな構造のみ。",
+        'de':"Grundlegendes Deutsch. Max. 12 Wörter. Einfache Struktur.",
+        'zh':"基礎的な表現。1文12単語以内。シンプルな構造のみ。",
     },
     "📘 中級 (B1/B2)": {
-        'en':"高校英語。接続詞（because/when）可。やや複雑な構造OK。",
-        'de':"Mittelstufe. Konjunktionen (weil/obwohl) erlaubt.",
-        'zh':"中級。接続詞（因為/雖然）可。やや複雑な構造OK。",
+        'en':"日常会話レベル。接続詞を使った少し複雑な構造もOK。",
+        'de':"Mittelstufe. Konjunktionen erlaubt.",
+        'zh':"日常会話レベル。接続詞を使った少し複雑な構造もOK。",
     },
     "📙 上級 (C1)": {
-        'en':"ビジネス英語。受動態・完了形・専門用語適宜使用。",
-        'de':"Geschäftsdeutsch. Passiv, Konjunktiv II, Fachvokabular erlaubt.",
-        'zh':"ビジネス中国語。専門用語適宜使用。敬語表現含む。",
+        'en':"自然で流暢な表現。豊かな語彙を使用。",
+        'de':"Fließendes Deutsch. Breiter Wortschatz.",
+        'zh':"自然で流暢な表現。豊かな語彙を使用。",
     },
     "🚀 ネイティブ風": {
-        'en':"ネイティブが日常的に使う自然な表現。慣用句・略語も使用可。",
+        'en':"ネイティブが日常的に使う自然な表現。慣用句も使用可。",
         'de':"Natürliches Deutsch. Idiome und Umgangssprache erlaubt.",
         'zh':"ネイティブが日常的に使う自然な表現。成語や慣用句も使用可。",
     },
@@ -546,30 +536,28 @@ def transcribe(audio_bytes: bytes, lang: str = 'en') -> tuple:
         return "", str(e)
 
 # ── PROMPT BUILDERS ──────────────────────────────────────────
-def build_prompt(user_input, is_biz, level_key, lang, scenario=""):
-    level_inst = LEVELS.get(level_key, LEVELS["📗 基礎 (A2)"])[lang]
-    scene = ("Fachmesse/Business (Produkterklärung, Verhandlung)" if is_biz else f"Alltag – {scenario}") if lang == 'de' else ("展示会・ビジネス（製品説明・商談）" if is_biz else f"日常会話 ― {scenario}")
-    target = "Deutschen" if lang == 'de' else ("中国語（必ずピンインを付けること）" if lang == 'zh' else "英語")
-    rule = "Max. 12 Wörter pro Satz. SVO-Struktur. Grammatik dem Level anpassen." if lang == 'de' else "1文最大12単語。SVO構造優先。レベルに合わせた語彙・文法を厳守。"
+def build_prompt(topic, level_name, level_desc, lang):
+    target = "ドイツ語" if lang == 'de' else ("中国語（必ずピンインを付与）" if lang == 'zh' else "英語")
     
     return f"""
-以下の条件でスクリプトをJSONのみで生成してください（コードブロック不要）。
-[入力文]: {user_input}
-[目標言語]: {target}
-[場面]: {scene}
-[レベル指示]: {level_inst}
-[ルール]: {rule}
+あなたはプロの語学教師です。以下の【入力内容】を、誰でも日常的に使える自然な{target}に翻訳・構成してください。
+
+【重要ルール】
+・ユーザーの入力意図を忠実に反映してください。
+・勝手に「ビジネス」「展示会」「会社代表」などの特殊な文脈を付け加えないでください（例：「私は日本人です」という入力に対し、「日本の会社を代表しています」などと飛躍させないこと）。
+
+【入力内容】: {topic}
+【学習レベル】: {level_name} ({level_desc})
+
+出力は必ず以下のJSONフォーマットのみにしてください。マークダウン(```json)は不要です。
 {{
-  "english": "{target}文（複数文はスペースで区切る）",
-  "english_jp": "自然な日本語訳",
-  "chunked": "スラッシュ区切り（Unser Produkt / ist leicht. / Es spart Energie.）",
-  "grammar": "文法・フレーズ解説（日本語）",
-  "vocab": {{"単語/Wort": "意味（日本語）"}},
-  "blank_q": "穴埋め文（___）",
-  "blank_a": "正解の単語",
-  "hint": "ヒント（日本語）",
-  "qa_pairs": [{{"question":"質問文","question_jp":"日本語訳","hint":"ヒント"}}],
-  "paraphrases": [{{"difficult":"難しい表現","simple":"簡単な言い換え","note":"メモ（日本語）"}}]
+  "script": "ターゲット言語の自然なフレーズ",
+  "translation": "日本語訳（チャンクごとに / で区切る）",
+  "words": [
+    {{"word": "単語1", "meaning": "意味1"}},
+    {{"word": "単語2", "meaning": "意味2"}}
+  ],
+  "explanation": "文法やフレーズの簡潔な解説"
 }}
 """
 
@@ -648,27 +636,24 @@ with st.sidebar:
 
 # ── HEADER & MODE ────────────────────────────────────────────
 mode = st.radio("モード", ["🏢 展示会・ビジネス", "☕ 日常会話・基礎"], horizontal=True, label_visibility="collapsed")
-is_biz = "展示会" in mode
+is_biz = False
 C = ac(is_biz, lang)
 
 st.markdown(f"<style>:root{{--acc:{C['main']};}}</style>", unsafe_allow_html=True)
 
 sys_p = {
-    ('en', True):  "あなたはビジネス英語の専門家です。展示会で通じるシンプルな英文を作成してください。",
-    ('en', False): "あなたは日常英会話のコーチです。旅行・生活・雑談で使えるシンプルな英文を作成してください。",
-    ('de', True):  "Sie sind Experte für Geschäftsdeutsch. Erstellen Sie einfache Sätze für Fachmessen.",
-    ('de', False): "Sie sind Deutschcoach für den Alltag. Erstellen Sie einfache Sätze für Reisen und Alltag.",
-    ('zh', True):  "あなたはビジネス中国語の専門家です。展示会で通じるシンプルな中国語文を作成し、必ずピンインを併記してください。",
-    ('zh', False): "あなたは日常中国語のコーチです。旅行や雑談で使えるシンプルな中国語文を作成し、必ずピンインを併記してください。",
-}.get((lang, is_biz), "")
+    'en': "あなたはプロの英語教師です。ユーザーの入力文を、自然で日常的な英文に翻訳・構成してください。勝手に文脈を付け加えないでください。",
+    'de': "あなたはプロのドイツ語教師です。ユーザーの入力文を、自然で日常的なドイツ語文に翻訳・構成してください。勝手に文脈を付け加えないでください。",
+    'zh': "あなたはプロの中国語教師です。ユーザーの入力文を、自然で日常的な中国語文に翻訳・構成し、必ずピンインを併記してください。勝手に文脈を付け加えないでください。",
+}.get(lang, "")
 
 st.markdown(f"""
 <div style="background:linear-gradient(135deg,{C['main']},{C['main']}cc); color:white; padding:18px 22px 14px; border-radius:16px; margin-bottom:14px; box-shadow: 0 4px 12px rgba(0,0,0,.3);">
   <div style="font-size:21px; font-weight:900; margin-bottom:3px;">
     {LS['flag']} {LS['app_title']}
   </div>
-  <div style="font-size:11px; opacity:.9;">
-    {LS['sub_biz'] if is_biz else LS['sub_daily']}
+  <div style="font-size:12px; opacity:.9;">
+    {LS['subtitle']}
   </div>
 </div>
 """, unsafe_allow_html=True)
