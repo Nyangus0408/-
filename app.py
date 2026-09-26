@@ -747,23 +747,23 @@ with tab1:
         else:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
-                    if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
-                        prompt = f"""
-                        提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
-                        [テキスト]: {user_input[:2000]}
-                        [場面]: {"ビジネス" if is_biz else "日常"}
-                        """
-                        prompt += build_prompt("", is_biz, level_key, lang, scenario)
-                    else: 
-                        prompt = build_prompt(user_input, is_biz, level_key, lang, scenario)
-                    
-                    result = do_generate(prompt, sys_p)
-                    result.update({
-                        "_source_ja": user_input[:100],
-                        "_level": level_key,
-                        "_mode": "business" if is_biz else "daily",
-                        "_lang": lang
-                    })
+                   if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
+            prompt = f"""
+            提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
+            [テキスト]: {user_input[:2000]}
+            """
+            prompt += build_prompt("", level_key, LEVELS[level_key][lang], lang)
+        else:
+            # 変数 user_input と、LEVELS辞書から取得したレベル説明を渡す
+            prompt = build_prompt(user_input, level_key, LEVELS[level_key][lang], lang)
+
+        result = do_generate(prompt, sys_p)
+        result.update({
+            "_source_ja": user_input[:100],
+            "_level": level_key,
+            "_mode": "daily",  # ビジネスモードを廃止し daily で固定
+            "_lang": lang
+        })
                     st.session_state.script_data = result
                     st.session_state.chat_history = []
                     data = result
