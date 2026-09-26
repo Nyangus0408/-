@@ -851,16 +851,6 @@ with tab6:
 # ============================================================
 with tab7:
 
-with tab_image:
-    st.subheader("📷 画像の取り込みと単語変換")
-    
-    capture_method = st.radio("取り込み方法を選択", ["ファイルから選択", "カメラで撮影"])
-    
-    if capture_method == "ファイルから選択":
-        uploaded_file = st.file_uploader("画像ファイルを選択 (PNG, JPG, JPEGなど)", type=["png", "jpg", "jpeg"])
-    else:
-        uploaded_file = st.camera_input("カメラで撮影")
-        
     st.markdown("### 📸 カメラ / 画像から単語を取り込み")
     st.write("単語帳や書類を撮影、または画像ファイルを選択して、自動でリスト化します。")
     
