@@ -850,6 +850,23 @@ with tab6:
 # TAB 7: 画像単語 (IMAGE VOCAB)
 # ============================================================
 with tab7:
+# 1. 省略記号（...）を使わず、ご自身の元のタブ定義コードに戻します
+# ※変数名（tab1など）はご自身の元の設定に合わせてください
+tab_input, tab_read, tab_voice, tab_pronounce, tab_practice, tab_talk, tab_image, tab_flash, tab_save = st.tabs([
+    "入力", "読解", "音読", "発音", "練習", "会話", "画像単語", "フラッシュ", "保存帳"
+])
+
+# 2. その上で、カメラやファイルアップロードの機能は、画像単語のブロック（with）の中にだけ入れます
+with tab_image:
+    st.subheader("📷 画像の取り込みと単語変換")
+    
+    capture_method = st.radio("取り込み方法を選択", ["ファイルから選択", "カメラで撮影"])
+    
+    if capture_method == "ファイルから選択":
+        uploaded_file = st.file_uploader("画像ファイルを選択 (PNG, JPG, JPEGなど)", type=["png", "jpg", "jpeg"])
+    else:
+        uploaded_file = st.camera_input("カメラで撮影")
+        
     st.markdown("### 📸 カメラ / 画像から単語を取り込み")
     st.write("単語帳や書類を撮影、または画像ファイルを選択して、自動でリスト化します。")
     
@@ -997,20 +1014,6 @@ else:
                     st.error("AIからのデータ受け取りに失敗しました。もう一度「抽出する」ボタンを押してください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
-# 修正イメージ
-tab_read, tab_practice, tab_image, ... = st.tabs(["読解", "練習", "画像単語", ...])
-
-# ❌ 誤った配置（タブの外にあると常に表示される）
-# uploaded_file = st.camera_input(...)
-
-with tab_image:
-    st.subheader("📷 画像の取り込みと単語変換")
-    # ✅ 正しい配置（画像単語タブの中に入れる）
-    capture_method = st.radio("取り込み方法を選択", ["ファイル", "カメラ"])
-    if capture_method == "ファイル":
-        uploaded_file = st.file_uploader("...")
-    else:
-        uploaded_file = st.camera_input("...")
         
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
