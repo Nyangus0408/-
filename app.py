@@ -747,7 +747,7 @@ with tab1:
         else:
             with st.spinner(f"AIが{LS['name']}スクリプトを作成中... ✨"):
                 try:
-                   if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
+                       if user_input.startswith("[PDF内容]") or user_input.startswith("[URL内容]"):
                 prompt = f"""
                 提供されたテキストを要約し、{LS['name']}の学習コンテンツをJSONのみで作成してください。
                 [テキスト]: {user_input[:2000]}
