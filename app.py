@@ -128,10 +128,10 @@ def save_words_to_turso(word_list):
 
 
 def save_words_to_turso(vocab_list, lang_code):
-    conn = get_db_conn() # ← ここを修正しました
+    conn = get_db_conn()
     if not conn: return 0
     
-    # 【重要】過去のデータベースに「language（言語）」の枠を自動追加（すでにある場合はスキップ）
+    # 過去のデータベースに「language（言語）」の枠を自動追加（すでにある場合はスキップ）
     try:
         conn.execute("ALTER TABLE vocabulary ADD COLUMN language TEXT")
         conn.commit()
@@ -140,20 +140,29 @@ def save_words_to_turso(vocab_list, lang_code):
 
     count = 0
     try:
+        cursor = conn.cursor()
         for item in vocab_list:
             word = item.get("word", "")
             meaning = item.get("meaning", "")
             example = item.get("example", "")
             
-            # lang_code（言語情報）を含めて保存
-            conn.execute("""
-                INSERT INTO vocabulary (word, meaning, example, language)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(word) DO UPDATE SET 
-                    meaning=excluded.meaning, 
-                    example=excluded.example,
-                    language=excluded.language
-            """, (word, meaning, example, lang_code))
+            # 1. まず単語が既にデータベースに存在するかチェック
+            cursor.execute("SELECT id FROM vocabulary WHERE word = ?", (word,))
+            existing_row = cursor.fetchone()
+            
+            if existing_row:
+                # 2-A. すでに存在する場合は内容を上書き（UPDATE）
+                cursor.execute("""
+                    UPDATE vocabulary 
+                    SET meaning = ?, example = ?, language = ?
+                    WHERE word = ?
+                """, (meaning, example, lang_code, word))
+            else:
+                # 2-B. 存在しない場合は新規追加（INSERT）
+                cursor.execute("""
+                    INSERT INTO vocabulary (word, meaning, example, language)
+                    VALUES (?, ?, ?, ?)
+                """, (word, meaning, example, lang_code))
             count += 1
         conn.commit()
     except Exception as e:
