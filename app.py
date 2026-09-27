@@ -14,6 +14,8 @@ import re
 import requests
 from gtts import gTTS
 from PIL import Image
+import pillow_heif
+pillow_heif.register_heif_opener()
 import libsql_experimental as libsql
 
 # ==========================================
@@ -1051,7 +1053,7 @@ with tab7:
     else:
         image_to_process = st.file_uploader(
             "画像ファイルを選択（PNG, JPG, JPEGなど）",
-            type=["png", "jpg", "jpeg"],
+            type=["png", "jpg", "jpeg","heic"],
             key="img_uploader"
         )
 
