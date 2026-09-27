@@ -1031,7 +1031,7 @@ with tab8:
         st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
         
         if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
-            if not st.session_state.vocab_list:
+        if not st.session_state.vocab_list:
                 st.warning("保存する単語がありません。先に画像から単語を追加してください。")
             else:
                 with st.spinner("クラウドDBに保存中..."):
