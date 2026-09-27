@@ -233,7 +233,63 @@ try:
     LIBSQL_OK = True
 except ImportError:
     LIBSQL_OK = False
+def load_scripts_from_db():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        cursor = conn.cursor()
+        # テーブルが存在しない場合は自動作成
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scripts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        
+        cursor.execute("SELECT id, title, content FROM scripts ORDER BY id DESC")
+        rows = cursor.fetchall()
+        return [{"id": row[0], "title": row[1], "content": row[2]} for row in rows]
+    except Exception as e:
+        st.error(f"スクリプト読み込みエラー: {e}")
+        return []
+    finally:
+        conn.close()
 
+def save_script_to_db(title, content):
+    conn = get_db_conn()
+    if not conn: return
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scripts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("INSERT INTO scripts (title, content) VALUES (?, ?)", (title, content))
+        conn.commit()
+    except Exception as e:
+        st.error(f"スクリプト保存エラー: {e}")
+    finally:
+        conn.close()
+
+def delete_script_from_db(script_id):
+    conn = get_db_conn()
+    if not conn: return
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM scripts WHERE id = ?", (script_id,))
+        conn.commit()
+    except Exception as e:
+        st.error(f"スクリプト削除エラー: {e}")
+    finally:
+        conn.close()
+        
 # ── MODEL NAME ──
 GEMINI_MODEL = "gemini-3.5-flash"
 
