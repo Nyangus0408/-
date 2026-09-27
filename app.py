@@ -1027,20 +1027,19 @@ with tab7:
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
-    st.markdown("### ☁️ 単語データの読み込み")
-    if st.button("🔄 クラウドDBから単語をロード", use_container_width=True):
-        with st.spinner("データを取得中..."):
-            db_words = load_words_from_turso()
-            
-        if db_words:
-            # セッションステートを更新
-            st.session_state.vocab_list = db_words
-            st.success(f"✅ クラウドDBから {len(db_words)} 件の単語を読み込みました！")
-            import time
-            time.sleep(1) # メッセージを1秒見せてから画面をリロード
-            st.rerun()
+st.markdown("### ☁️ クラウドデータベースへの保存")
+    st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
+    
+    if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
+        if not st.session_state.vocab_list:
+            st.warning("保存する単語がありません。先に画像から単語を追加してください。")
         else:
-            st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加・保存してください。")
+            with st.spinner("クラウドDBに保存中..."):
+                try:
+                    save_words_to_turso(st.session_state.vocab_list)
+                    st.success("✅ クラウドDBに保存しました！フラッシュカードタブで読み込んでください。")
+                except Exception as e:
+                    st.error(f"保存中にエラーが発生しました: {e}")
 
     st.divider()
 
