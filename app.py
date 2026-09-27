@@ -1041,7 +1041,7 @@ with tab8:
                 except Exception as e:
                     st.error(f"保存中にエラーが発生しました: {e}")
 
-   st.divider()
+    st.divider()
 
         if not st.session_state.vocab_list:
             st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
