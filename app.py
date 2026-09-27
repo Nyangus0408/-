@@ -926,40 +926,20 @@ with tab7:
     # ----------------------------------------------------
     # ① 単語データの保存・復元機能（自動結合バージョン）
     # ----------------------------------------------------
-    st.markdown("#### 💾 単語データの保存と復元")
-    col_save1, col_save2 = st.columns(2)
-    with col_save1:
-        uploaded_file = st.file_uploader("📂 保存したJSONファイルを読み込む", type=["json"], key="json_uploader")
-        if uploaded_file is not None:
-            try:
-                loaded_vocab = json.load(uploaded_file)
-                if 'vocab_list' not in st.session_state:
-                    st.session_state.vocab_list = []
-                
-                existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
-                added_count = 0
-                for item in loaded_vocab:
-                    if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
-                        st.session_state.vocab_list.append(item)
-                        existing_words.add(item.get('word'))
-                        added_count += 1
-                
-                st.success(f"単語リストを結合しました！（新規追加: {added_count}件 / 合計: {len(st.session_state.vocab_list)}件）")
-            except Exception as e:
-                st.error("ファイルの読み込みに失敗しました。")
-
-    with col_save2:
-        if 'vocab_list' in st.session_state and st.session_state.vocab_list:
-            json_str = json.dumps(st.session_state.vocab_list, ensure_ascii=False, indent=2)
-            st.download_button(
-                label=f"⬇️ 単語リストをPCに保存（計 {len(st.session_state.vocab_list)} 件）",
-                data=json_str,
-                file_name="my_vocab_list.json",
-                mime="application/json",
-                type="primary"
-            )
+    st.markdown("### ☁️ クラウドデータベースへの保存")
+    st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
+    
+    if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
+        if not st.session_state.vocab_list:
+            st.warning("保存する単語がありません。先に画像から単語を追加してください。")
         else:
-            st.info("保存できる単語データがありません")
+            with st.spinner("クラウドDBに保存中..."):
+                try:
+                    # DBへの保存関数を呼び出し
+                    save_words_to_turso(st.session_state.vocab_list)
+                    st.success("✅ クラウドDBに保存しました！フラッシュカードタブで読み込んでください。")
+                except Exception as e:
+                    st.error(f"保存中にエラーが発生しました: {e}")
             
         
     # ----------------------------------------------------
@@ -1047,21 +1027,22 @@ with tab7:
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
-    st.markdown("### ▶️ 刷り込み再生モード")
-    st.subheader("☁️ クラウドDBからの単語読み込み")
+    st.markdown("### ☁️ 単語データの読み込み")
     if st.button("🔄 クラウドDBから単語をロード", use_container_width=True):
         with st.spinner("データを取得中..."):
             db_words = load_words_from_turso()
             
         if db_words:
-            # 取得した単語でセッションのリストを上書きして画面を更新
+            # セッションステートを更新
             st.session_state.vocab_list = db_words
-            st.success(f"クラウドDBから {len(db_words)} 件の単語を読み込みました！")
-            st.rerun() 
+            st.success(f"✅ クラウドDBから {len(db_words)} 件の単語を読み込みました！")
+            import time
+            time.sleep(1) # メッセージを1秒見せてから画面をリロード
+            st.rerun()
         else:
-            st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加してください。")
-            
-        st.divider()
+            st.info("現在DBに保存されている単語はありません。「画像単語」タブから追加・保存してください。")
+
+    st.divider()
 
         if not st.session_state.vocab_list:
             st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
