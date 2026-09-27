@@ -1023,60 +1023,51 @@ with tab6:
                     st.error(e)
 
 # ============================================================
-# TAB 7: 画像単語 (IMAGE VOCAB)
+# TAB 7: 画像単語 (IMAGE VOCAB) - 複数一括読み込み対応版
 # ============================================================
 with tab7:
-
-    st.markdown("### 📸 カメラ / 画像から単語を取り込み")
+    st.markdown("### 📸 カメラ / 画像から単語を抽出")
     st.write(
-        "単語帳や書類を撮影、または画像ファイルを選択して、"
-        "自動で単語リスト化します。"
+        "単語帳や書類を撮影、または画像ファイルを選択して、自動で単語リスト化します。"
+        "**複数の画像を一度に選んで一括処理できます（HEIC対応）。**"
     )
 
     input_method = st.radio(
         "取り込み方法を選択",
-        [
-            "ファイルから選択（ギャラリー・フォルダ）",
-            "カメラで撮影"
-        ],
+        ["ファイルから選択（ギャラリー・フォルダ）", "カメラで撮影"],
         horizontal=True,
         key="image_input_method"
     )
 
-    image_to_process = None
+    images_to_process = []
 
     if input_method == "カメラで撮影":
-        image_to_process = st.camera_input(
-            "カメラで撮影",
-            key="vocab_camera"
-        )
+        camera_image = st.camera_input("カメラで撮影", key="vocab_camera")
+        if camera_image:
+            images_to_process = [camera_image]
     else:
-        image_to_process = st.file_uploader(
-            "画像ファイルを選択（PNG, JPG, JPEGなど）",
-            type=["png", "jpg", "jpeg","heic"],
+        # accept_multiple_files=True で複数選択を可能に
+        uploaded_images = st.file_uploader(
+            "画像ファイルを選択（複数選択可。PNG, JPG, HEICなど）",
+            type=["png", "jpg", "jpeg", "heic", "HEIC"],
+            accept_multiple_files=True,
             key="img_uploader"
         )
+        if uploaded_images:
+            images_to_process = uploaded_images
 
-    if image_to_process is not None:
+    if images_to_process:
+        st.write(f"📁 **{len(images_to_process)} 枚**の画像が選択されています。")
+        
+        # 選択された画像のプレビューを横並びで表示
+        cols = st.columns(min(len(images_to_process), 3))
+        for idx, img_file in enumerate(images_to_process):
+            with cols[idx % 3]:
+                st.image(img_file, use_container_width=True)
 
-        st.image(
-            image_to_process,
-            caption="選択・撮影された画像",
-            use_container_width=True
-        )
-
-        if st.button(
-            "✨ この画像から単語を抽出する",
-            type="primary",
-            use_container_width=True,
-            key="extract_vocab_from_image"
-        ):
-
-            with st.spinner("Geminiが画像を解析して単語を抽出中..."):
-
+        if st.button("✨ 選択した画像から単語を一括抽出する", type="primary", use_container_width=True, key="extract_vocab_from_images"):
+            with st.spinner("Geminiが画像を解析して単語を一括抽出中..."):
                 try:
-                    img = Image.open(image_to_process)
-
                     if lang == "en":
                         target_lang = "英語"
                     elif lang == "de":
@@ -1085,85 +1076,63 @@ with tab7:
                         target_lang = "中国語"
 
                     prompt = f"""
-この画像に含まれる{target_lang}の重要な単語やフレーズを抽出してください。
+これらの画像に含まれる{target_lang}の重要な単語やフレーズをすべて抽出してください。
+複数の画像がある場合は、すべての画像から抽出してください。
 
-以下のJSON形式の配列のみを返してください。
-Markdownや```jsonは使用しないでください。
-
+以下のJSON形式の配列のみを返してください。Markdownや```jsonは使用しないでください。
 [
   {{"word": "apple", "meaning": "りんご"}},
   {{"word": "negotiation", "meaning": "交渉"}}
 ]
 """
+                    # AIに送るデータのリスト（最初はテキストプロンプト）
+                    contents_to_send = [types.Part.from_text(text=prompt)]
+                    
+                    # 選択された画像をすべて変換してリストに追加
+                    for img_file in images_to_process:
+                        # HEICなどの画像をPillowで開き、標準的なJPEGデータに変換（エラー対策）
+                        img = Image.open(img_file)
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG")
+                        
+                        # JPEGデータとしてAIへの送信リストに追加
+                        contents_to_send.append(
+                            types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
+                        )
 
-                    # 現在のアプリで使用している
-                    # google.genai クライアントを利用
+                    # まとめて1回だけAIにリクエストを送信
                     response = st.session_state["_client"].models.generate_content(
                         model=GEMINI_MODEL,
-                        contents=[
-                            types.Part.from_text(text=prompt),
-                            types.Part.from_bytes(
-                                data=image_to_process.getvalue(),
-                                mime_type=image_to_process.type
-                            )
-                        ]
+                        contents=contents_to_send
                     )
 
                     result_text = response.text.strip()
+                    result_text = re.sub(r"^```(?:json)?\s*", "", result_text)
+                    result_text = re.sub(r"\s*```$", "", result_text)
 
-                    result_text = re.sub(
-                        r"^```(?:json)?\s*",
-                        "",
-                        result_text
-                    )
-
-                    result_text = re.sub(
-                        r"\s*```$",
-                        "",
-                        result_text
-                    )
-
-                    extracted_items = json.loads(
-                        result_text.strip()
-                    )
+                    extracted_items = json.loads(result_text.strip())
 
                     if extracted_items:
-
                         existing_words = {
-                            item.get("word")
-                            for item in st.session_state.vocab_list
-                            if isinstance(item, dict)
+                            item.get("word") for item in st.session_state.vocab_list if isinstance(item, dict)
                         }
-
                         new_added = 0
 
                         for item in extracted_items:
-
-                            if (
-                                isinstance(item, dict)
-                                and item.get("word")
-                                and item.get("word") not in existing_words
-                            ):
+                            if isinstance(item, dict) and item.get("word") and item.get("word") not in existing_words:
                                 st.session_state.vocab_list.append(item)
                                 existing_words.add(item.get("word"))
                                 new_added += 1
 
-                        st.success(
-                            f"{new_added}件の単語を新しく追加しました！"
-                            f"（合計: {len(st.session_state.vocab_list)}件）"
-                        )
-
+                        st.success(f"🎉 {new_added}件の単語を新しく追加しました！（合計: {len(st.session_state.vocab_list)}件）")
                     else:
-                        st.warning(
-                            "画像から単語を検出できませんでした。"
-                        )
+                        st.warning("画像から単語を検出できませんでした。")
 
                 except json.JSONDecodeError:
-                    st.error(
-                        "AIからのJSONデータ受け取りに失敗しました。"
-                        "もう一度お試しください。"
-                    )
-
+                    st.error("AIからのJSONデータ受け取りに失敗しました。もう一度お試しください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
 
@@ -1172,18 +1141,10 @@ Markdownや```jsonは使用しないでください。
     st.subheader("📝 現在の単語リスト")
 
     if st.session_state.vocab_list:
-
         for i, item in enumerate(st.session_state.vocab_list, 1):
-            st.markdown(
-                f"**{i}. {item.get('word', '')}** "
-                f"— {item.get('meaning', '')}"
-            )
-
+            st.markdown(f"**{i}. {item.get('word', '')}** — {item.get('meaning', '')}")
     else:
-        st.info(
-            "まだ単語がありません。"
-            "画像から単語を抽出してください。"
-        )
+        st.info("まだ単語がありません。画像から単語を抽出してください。")
         
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
