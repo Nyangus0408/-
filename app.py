@@ -128,7 +128,7 @@ def save_words_to_turso(word_list):
 
 
 def save_words_to_turso(vocab_list, lang_code):
-    conn = get_turso_connection()
+    conn = get_db_conn() # ← ここを修正しました
     if not conn: return 0
     
     # 【重要】過去のデータベースに「language（言語）」の枠を自動追加（すでにある場合はスキップ）
@@ -163,7 +163,7 @@ def save_words_to_turso(vocab_list, lang_code):
     return count
 
 def load_words_from_turso(lang_code):
-    conn = get_turso_connection()
+    conn = get_db_conn() # ← ここを修正しました
     if not conn: return []
     
     # 【重要】ここでも念のため言語枠の追加を実行
@@ -192,110 +192,13 @@ def load_words_from_turso(lang_code):
 
 # 新規追加：クラウドDBから特定の単語を削除する関数
 def delete_word_from_turso(word_id):
-    conn = get_turso_connection()
+    conn = get_db_conn() # ← ここを修正しました
     if not conn: return
     try:
         conn.execute("DELETE FROM vocabulary WHERE id = ?", (word_id,))
         conn.commit()
     except Exception as e:
         st.error(f"削除エラー: {e}")
-    finally:
-        conn.close()
-
-
-def update_review_record(word_id):
-    conn = get_db_conn()
-
-    if not conn:
-        return
-
-    try:
-        conn.execute("""
-            UPDATE vocabulary
-            SET
-                review_count = COALESCE(review_count, 0) + 1,
-                last_reviewed = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (word_id,))
-
-        conn.commit()
-
-    finally:
-        conn.close()
-
-
-def save_script_to_db(title, data):
-    conn = get_db_conn()
-
-    if not conn:
-        return False
-
-    try:
-        conn.execute(
-            """
-            INSERT INTO saved_scripts
-            (title, content_json)
-            VALUES (?, ?)
-            """,
-            (
-                title,
-                json.dumps(data, ensure_ascii=False)
-            )
-        )
-
-        conn.commit()
-        return True
-
-    except Exception:
-        return False
-
-    finally:
-        conn.close()
-
-
-def load_scripts_from_db():
-    conn = get_db_conn()
-    result = []
-
-    if not conn:
-        return result
-
-    try:
-        cur = conn.execute("""
-            SELECT id, title, content_json, created_at
-            FROM saved_scripts
-            ORDER BY created_at DESC
-        """)
-
-        for row in cur.fetchall():
-            try:
-                data = json.loads(row[2])
-                data["_db_id"] = row[0]
-                data["_title"] = row[1]
-                data["_created_at"] = row[3]
-                result.append(data)
-            except Exception:
-                pass
-
-    finally:
-        conn.close()
-
-    return result
-
-
-def delete_script_from_db(db_id):
-    conn = get_db_conn()
-
-    if not conn:
-        return
-
-    try:
-        conn.execute(
-            "DELETE FROM saved_scripts WHERE id = ?",
-            (db_id,)
-        )
-        conn.commit()
-
     finally:
         conn.close()
 
