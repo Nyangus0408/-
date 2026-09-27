@@ -1036,22 +1036,29 @@ with tab7:
         if st.button("✨ 選択した画像から単語を一括抽出する", type="primary", use_container_width=True, key="extract_vocab_from_images"):
             with st.spinner("Geminiが画像を解析して単語を一括抽出中..."):
                 try:
+                    # 言語ごとの設定とAIへの追加指示
                     if lang == "en":
                         target_lang = "英語"
+                        extra_rule = ""
+                        example_json = '[\n  {"word": "apple", "meaning": "りんご"},\n  {"word": "negotiation", "meaning": "交渉"}\n]'
                     elif lang == "de":
                         target_lang = "ドイツ語"
+                        # ドイツ語の時だけ、AIに定冠詞をつけるよう強く指示する
+                        extra_rule = "【重要】抽出する単語が名詞の場合は、必ず先頭に定冠詞（der, die, das）を付けてください。"
+                        example_json = '[\n  {"word": "der Apfel", "meaning": "りんご"},\n  {"word": "die Verhandlung", "meaning": "交渉"}\n]'
                     else:
                         target_lang = "中国語"
+                        extra_rule = ""
+                        example_json = '[\n  {"word": "苹果", "meaning": "りんご"},\n  {"word": "谈判", "meaning": "交渉"}\n]'
 
                     prompt = f"""
 これらの画像に含まれる{target_lang}の重要な単語やフレーズをすべて抽出してください。
 複数の画像がある場合は、すべての画像から抽出してください。
+{extra_rule}
 
 以下のJSON形式の配列のみを返してください。Markdownや```jsonは使用しないでください。
-[
-  {{"word": "apple", "meaning": "りんご"}},
-  {{"word": "negotiation", "meaning": "交渉"}}
-]
+{example_json}
+
 """
                     # AIに送るデータのリスト（最初はテキストプロンプト）
                     contents_to_send = [types.Part.from_text(text=prompt)]
