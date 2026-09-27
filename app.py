@@ -17,6 +17,7 @@ from PIL import Image
 import pillow_heif
 pillow_heif.register_heif_opener()
 import libsql_experimental as libsql
+import gc  # ガベージコレクション（メモリ解放）用
 
 # ==========================================
 # PAGE CONFIG
@@ -1105,19 +1106,26 @@ with tab7:
                     contents_to_send = [types.Part.from_text(text=prompt)]
                     
                     # 選択された画像をすべて変換してリストに追加
+                   # 選択された画像をリサイズして軽量化しながらリストに追加
                     for img_file in images_to_process:
-                        # HEICなどの画像をPillowで開き、標準的なJPEGデータに変換（エラー対策）
                         img = Image.open(img_file)
                         if img.mode != "RGB":
                             img = img.convert("RGB")
                         
+                        # 【重要】メモリ溢れ防止：OCR用に十分なサイズ(1280px)に縮小
+                        img.thumbnail((1280, 1280))
+                        
                         buf = io.BytesIO()
-                        img.save(buf, format="JPEG")
+                        img.save(buf, format="JPEG", quality=80)
                         
                         # JPEGデータとしてAIへの送信リストに追加
                         contents_to_send.append(
                             types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
                         )
+                        
+                        # メモリを明示的に解放
+                        del img
+                        gc.collect()
 
                     # まとめて1回だけAIにリクエストを送信
                     response = st.session_state["_client"].models.generate_content(
