@@ -1158,40 +1158,42 @@ with tab8:
                     except Exception as e:
                         st.error(f"保存中にエラーが発生しました: {e}")
 
+    # ===== （上のロード・保存ボタンなどの処理はそのまま） =====
     st.divider()
 
-    # ② 単語リスト一覧と削除機能
     if not st.session_state.get("vocab_list"):
         st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
     else:
-        st.markdown(f"#### 📖 {selected_vocab_lang} の単語リスト一覧")
-        
-        # リストの見出し行
-        col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
-        col_w.caption("単語")
-        col_m.caption("意味")
-        col_e.caption("例文")
-        col_d.caption("操作")
-        
-        # 単語データと「削除」ボタンの表示
-        for i, word_data in enumerate(st.session_state.vocab_list):
-            col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
-            col_w.write(f"**{word_data.get('word', '')}**")
-            col_m.write(word_data.get('meaning', ''))
-            col_e.write(word_data.get('example', ''))
+        # ▼▼▼【改善ポイント】単語リストを折りたたみ（アコーディオン）の中に収納 ▼▼▼
+        with st.expander(f"📖 {selected_vocab_lang} の単語リスト一覧・編集（クリックで開閉）", expanded=False):
             
-            # DBに保存済み（idがある）単語のみ削除可能にする
-            if "id" in word_data:
-                with col_d:
-                    if st.button("🗑️ 削除", key=f"del_vocab_{word_data['id']}"):
-                        delete_word_from_turso(word_data["id"])
-                        st.success(f"「{word_data['word']}」を削除しました")
-                        st.session_state.vocab_list.pop(i) # 画面上からも消す
-                        import time
-                        time.sleep(1)
-                        st.rerun()
-        
+            # リストの見出し行
+            col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
+            col_w.caption("単語")
+            col_m.caption("意味")
+            col_e.caption("例文")
+            col_d.caption("操作")
+            
+            # 単語データと「削除」ボタンの表示
+            for i, word_data in enumerate(st.session_state.vocab_list):
+                col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
+                col_w.write(f"**{word_data.get('word', '')}**")
+                col_m.write(word_data.get('meaning', ''))
+                col_e.write(word_data.get('example', ''))
+                
+                # DBに保存済み（idがある）単語のみ削除可能にする
+                if "id" in word_data:
+                    with col_d:
+                        if st.button("🗑️ 削除", key=f"del_vocab_{word_data['id']}"):
+                            delete_word_from_turso(word_data["id"])
+                            st.success(f"「{word_data['word']}」を削除しました")
+                            st.session_state.vocab_list.pop(i) # 画面上からも消す
+                            import time
+                            time.sleep(1)
+                            st.rerun()
+
         st.divider()
+
         st.markdown("#### 🎴 フラッシュカード")
         
 
