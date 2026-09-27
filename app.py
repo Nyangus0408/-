@@ -285,28 +285,6 @@ def delete_script_from_db(db_id):
     finally:
         conn.close()
 
-def load_words_for_review():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, word, meaning, example 
-        FROM vocabulary 
-        ORDER BY last_reviewed ASC NULLS FIRST, review_count ASC
-        LIMIT 10
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"id": row[0], "word": row[1], "meaning": row[2], "example": row[3]} for row in rows]
-
-def update_review_record(word_id):
-    conn = get_db_connection()
-    conn.execute("""
-        UPDATE vocabulary 
-        SET review_count = review_count + 1, last_reviewed = CURRENT_TIMESTAMP
-        WHERE id = ?
-    """, (word_id,))
-    conn.commit()
-    conn.close()
 try:
     from pypdf import PdfReader
     PDF_OK = True
@@ -1198,38 +1176,34 @@ Markdownや```jsonは使用しないでください。
 # ============================================================
 with tab8:
 
-    st.markdown("### ☁️ クラウドデータベースへの保存")
-    st.write(
-        "リストに追加した単語をクラウドに保存し、"
-        "フラッシュカードで使えるようにします。"
-    )
+    st.markdown("### ☁️ クラウドデータベースとの連携")
+    
+    col_load, col_save = st.columns(2)
+    
+    with col_load:
+        if st.button("🔄 クラウドから単語をロード", use_container_width=True, key="tab8_load"):
+            with st.spinner("データを取得中..."):
+                db_words = load_words_from_turso()
+            if db_words:
+                st.session_state.vocab_list = db_words
+                st.success(f"✅ {len(db_words)} 件の単語を読み込みました！")
+                import time
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.info("DBに保存されている単語はありません。")
 
-    if st.button(
-        "💾 現在の単語リストをクラウドDBに保存",
-        use_container_width=True,
-        key="tab8_save_vocab_to_turso"
-    ):
-        if not st.session_state.vocab_list:
-            st.warning(
-                "保存する単語がありません。"
-                "先に「📸 画像単語」タブで単語を追加してください。"
-            )
-        else:
-            with st.spinner("クラウドDBに保存中..."):
-                try:
-                    saved_count = save_words_to_turso(
-                        st.session_state.vocab_list
-                    )
-
-                    st.success(
-                        f"✅ {saved_count}件の単語を"
-                        "クラウドDBに保存しました！"
-                    )
-
-                except Exception as e:
-                    st.error(
-                        f"保存中にエラーが発生しました: {e}"
-                    )
+    with col_save:
+        if st.button("💾 現在のリストをクラウドに保存", use_container_width=True, key="tab8_save"):
+            if not st.session_state.vocab_list:
+                st.warning("保存する単語がありません。")
+            else:
+                with st.spinner("クラウドDBに保存中..."):
+                    try:
+                        saved_count = save_words_to_turso(st.session_state.vocab_list)
+                        st.success(f"✅ {saved_count}件の単語を保存しました！")
+                    except Exception as e:
+                        st.error(f"保存中にエラーが発生しました: {e}")
 
     st.divider()
 
