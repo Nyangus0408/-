@@ -1043,13 +1043,21 @@ with tab8:
 
     st.divider()
 
-        if not st.session_state.vocab_list:
-            st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
-        else:
-            interval = st.slider("単語表示から訳・音声が出るまでの時間（秒）", min_value=1.0, max_value=4.0, value=2.0, step=0.5, key="slider_word_interval_unique")
-            vocab_json = json.dumps(st.session_state.vocab_list)
-            lang_code = 'en-US' if lang == 'en' else 'de-DE'
-            btn_color = C["main"]
+    if not st.session_state.vocab_list:
+        st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
+    else:
+        interval = st.slider(
+            "単語表示から訳・音声が出るまでの時間（秒）",
+            min_value=1.0,
+            max_value=4.0,
+            value=2.0,
+            step=0.5,
+            key="slider_word_interval_unique"
+        )
+
+        vocab_json = json.dumps(st.session_state.vocab_list)
+        lang_code = 'en-US' if lang == 'en' else 'de-DE'
+        btn_color = C["main"]
 
         html_code = f"""
         <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
@@ -1079,7 +1087,6 @@ with tab8:
             <!-- 単語リスト表示エリア -->
             <div style="font-size: 14px; font-weight: bold; color: #cbd5e1; margin-bottom: 8px;">📋 単語リスト（クリックで再生開始）</div>
             <div id="vocabList" style="height: 250px; overflow-y: auto; background-color: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 5px;">
-                <!-- ここにリストが自動生成されます -->
             </div>
         </div>
 
@@ -1146,6 +1153,7 @@ with tab8:
                     vocabListDiv.appendChild(div);
                 }});
             }}
+
             renderList();
 
             function updateHighlight(originalIdx) {{
@@ -1176,6 +1184,7 @@ with tab8:
                 }}
                 index = 0;
                 interrupt = true;
+
                 if (!isPlaying) {{
                     wordText.innerText = "Order Updated";
                     meaningText.innerText = "順番が変更されました";
@@ -1204,7 +1213,10 @@ with tab8:
             async function playLoop() {{
                 while (isPlaying) {{
                     interrupt = false;
-                    if (index >= vocab.length) {{ index = 0; }}
+
+                    if (index >= vocab.length) {{
+                        index = 0;
+                    }}
                     
                     let originalIdx = playOrder[index];
                     const current = vocab[originalIdx];
@@ -1215,6 +1227,7 @@ with tab8:
                     meaningText.innerText = "";
                     
                     await sleep(waitBeforeAnswerMs);
+
                     if (!isPlaying) break;
                     if (interrupt) continue;
                     
@@ -1222,6 +1235,7 @@ with tab8:
                     speakText(current.word);
                     
                     await sleep(waitAfterAnswerMs);
+
                     if (!isPlaying) break;
                     if (interrupt) continue;
                     
@@ -1262,6 +1276,8 @@ with tab8:
             }});
         </script>
         """
+
+        st.components.v1.html(html_code, height=650, scrolling=False)
 
 # ============================================================
 # TAB 9: SAVED (クラウド対応版)
