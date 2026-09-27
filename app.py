@@ -1027,7 +1027,7 @@ with tab7:
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
-st.markdown("### ☁️ クラウドデータベースへの保存")
+    st.markdown("### ☁️ クラウドデータベースへの保存")
     st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
     
     if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
