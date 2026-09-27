@@ -17,68 +17,273 @@ from PIL import Image
 import libsql_experimental as libsql
 
 # ==========================================
-# データベース（Turso）接続・操作用の関数群
+# PAGE CONFIG
 # ==========================================
-def get_db_connection():
-    url = st.secrets.get("TURSO_DATABASE_URL")
-    token = st.secrets.get("TURSO_AUTH_TOKEN")
-    if not url or not token:
-        st.error("⚠️ Streamlit Secrets にTursoの接続情報が設定されていません。")
-        st.stop()
-    return libsql.connect(database=url, auth_token=token)
+st.set_page_config(
+    page_title="Pitch & Talk Pro",
+    page_icon="🌐",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# ==========================================
+# Turso DB
+# ==========================================
+try:
+    import libsql_experimental as libsql
+    LIBSQL_OK = True
+except ImportError:
+    LIBSQL_OK = False
+
+
+def get_db_conn():
+    """Tursoへの接続。未設定の場合はNoneを返す。"""
+    if not LIBSQL_OK:
+        return None
+
+    try:
+        url = st.secrets.get("TURSO_DATABASE_URL", "")
+        token = st.secrets.get("TURSO_AUTH_TOKEN", "")
+
+        if not url or not token:
+            return None
+
+        return libsql.connect(
+            database=url,
+            auth_token=token
+        )
+    except Exception:
+        return None
+
 
 def init_db():
+    """必要なDBテーブルを作成する。"""
+    conn = get_db_conn()
+
+    if not conn:
+        return
+
     try:
-        conn = get_db_connection()
         conn.execute("""
             CREATE TABLE IF NOT EXISTS vocabulary (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word TEXT NOT NULL,
                 meaning TEXT NOT NULL,
                 example TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                review_count INTEGER DEFAULT 0,
+                last_reviewed TIMESTAMP
+            )
         """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS saved_scripts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                content_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         conn.commit()
-        conn.close()
+
     except Exception as e:
-        st.error(f"データベースの初期化エラー: {e}")
+        st.warning(f"⚠️ データベース初期化エラー: {e}")
 
-def save_words_to_turso(word_list):
-    conn = get_db_connection()
-    count = 0
-    for item in word_list:
-        conn.execute(
-            "INSERT INTO vocabulary (word, meaning, example) VALUES (?, ?, ?)",
-            (item.get("word", ""), item.get("meaning", ""), item.get("example", ""))
-        )
-        count += 1
-    conn.commit()
-    conn.close()
-    return count
-
-def load_words_from_turso():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT word, meaning, example FROM vocabulary ORDER BY created_at DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"word": row[0], "meaning": row[1], "example": row[2]} for row in rows]
-
-# アプリ起動時にテーブルがなければ作成する
-init_db()
-def upgrade_db_for_spaced_repetition():
-    conn = get_db_connection()
-    try:
-        conn.execute("ALTER TABLE vocabulary ADD COLUMN review_count INTEGER DEFAULT 0;")
-        conn.execute("ALTER TABLE vocabulary ADD COLUMN last_reviewed TIMESTAMP;")
-        conn.commit()
-    except Exception:
-        pass
     finally:
         conn.close()
 
-upgrade_db_for_spaced_repetition()
+
+def save_words_to_turso(word_list):
+    conn = get_db_conn()
+
+    if not conn:
+        raise RuntimeError("Turso DBに接続できません。")
+
+    count = 0
+
+    try:
+        for item in word_list:
+            conn.execute(
+                """
+                INSERT INTO vocabulary
+                (word, meaning, example)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    item.get("word", ""),
+                    item.get("meaning", ""),
+                    item.get("example", "")
+                )
+            )
+            count += 1
+
+        conn.commit()
+        return count
+
+    finally:
+        conn.close()
+
+
+def load_words_from_turso():
+    conn = get_db_conn()
+
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT word, meaning, example
+            FROM vocabulary
+            ORDER BY created_at DESC
+        """)
+
+        rows = cursor.fetchall()
+
+        return [
+            {
+                "word": row[0],
+                "meaning": row[1],
+                "example": row[2]
+            }
+            for row in rows
+        ]
+
+    finally:
+        conn.close()
+
+
+def load_words_for_review():
+    conn = get_db_conn()
+
+    if not conn:
+        return []
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, word, meaning, example
+            FROM vocabulary
+            ORDER BY
+                CASE WHEN last_reviewed IS NULL THEN 0 ELSE 1 END,
+                last_reviewed ASC,
+                review_count ASC
+            LIMIT 10
+        """)
+
+        rows = cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "word": row[1],
+                "meaning": row[2],
+                "example": row[3]
+            }
+            for row in rows
+        ]
+
+    finally:
+        conn.close()
+
+
+def update_review_record(word_id):
+    conn = get_db_conn()
+
+    if not conn:
+        return
+
+    try:
+        conn.execute("""
+            UPDATE vocabulary
+            SET
+                review_count = COALESCE(review_count, 0) + 1,
+                last_reviewed = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (word_id,))
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+def save_script_to_db(title, data):
+    conn = get_db_conn()
+
+    if not conn:
+        return False
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO saved_scripts
+            (title, content_json)
+            VALUES (?, ?)
+            """,
+            (
+                title,
+                json.dumps(data, ensure_ascii=False)
+            )
+        )
+
+        conn.commit()
+        return True
+
+    except Exception:
+        return False
+
+    finally:
+        conn.close()
+
+
+def load_scripts_from_db():
+    conn = get_db_conn()
+    result = []
+
+    if not conn:
+        return result
+
+    try:
+        cur = conn.execute("""
+            SELECT id, title, content_json, created_at
+            FROM saved_scripts
+            ORDER BY created_at DESC
+        """)
+
+        for row in cur.fetchall():
+            try:
+                data = json.loads(row[2])
+                data["_db_id"] = row[0]
+                data["_title"] = row[1]
+                data["_created_at"] = row[3]
+                result.append(data)
+            except Exception:
+                pass
+
+    finally:
+        conn.close()
+
+    return result
+
+
+def delete_script_from_db(db_id):
+    conn = get_db_conn()
+
+    if not conn:
+        return
+
+    try:
+        conn.execute(
+            "DELETE FROM saved_scripts WHERE id = ?",
+            (db_id,)
+        )
+        conn.commit()
+
+    finally:
+        conn.close()
 
 def load_words_for_review():
     conn = get_db_connection()
@@ -128,89 +333,6 @@ except ImportError:
 # ── MODEL NAME ──
 GEMINI_MODEL = "gemini-3.5-flash"
 
-# ── PAGE CONFIG ──────────────────────────────────────────────
-st.set_page_config(
-    page_title="Pitch & Talk Pro",
-    page_icon="🌐", 
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
-# ── TURSO DB HELPER FUNCTIONS ────────────────────────────────
-def get_db_conn():
-    if not LIBSQL_OK: return None
-    try:
-        url = st.secrets.get("TURSO_DATABASE_URL", "")
-        token = st.secrets.get("TURSO_AUTH_TOKEN", "")
-        if url and token:
-            return libsql.connect(database=url, auth_token=token)
-    except:
-        pass
-    return None
-
-def init_db():
-    conn = get_db_conn()
-    if conn:
-        try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS saved_scripts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT,
-                    content_json TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-        except:
-            pass
-        finally:
-            conn.close()
-
-def save_script_to_db(title, data):
-    conn = get_db_conn()
-    if conn:
-        try:
-            conn.execute("INSERT INTO saved_scripts (title, content_json) VALUES (?, ?)", 
-                         (title, json.dumps(data, ensure_ascii=False)))
-            conn.commit()
-            return True
-        except:
-            pass
-        finally:
-            conn.close()
-    return False
-
-def load_scripts_from_db():
-    conn = get_db_conn()
-    res = []
-    if conn:
-        try:
-            cur = conn.execute("SELECT id, title, content_json, created_at FROM saved_scripts ORDER BY created_at DESC")
-            for r in cur.fetchall():
-                try:
-                    d = json.loads(r[2])
-                    d['_db_id'] = r[0]
-                    d['_title'] = r[1]
-                    d['_created_at'] = r[3]
-                    res.append(d)
-                except:
-                    pass
-        except:
-            pass
-        finally:
-            conn.close()
-    return res
-
-def delete_script_from_db(db_id):
-    conn = get_db_conn()
-    if conn:
-        try:
-            conn.execute("DELETE FROM saved_scripts WHERE id = ?", (db_id,))
-            conn.commit()
-        except:
-            pass
-        finally:
-            conn.close()
 
 # ── CSS (ダーク・ハイコントラストテーマ) ─────────────────────────
 st.markdown("""
@@ -914,132 +1036,200 @@ with tab6:
 with tab7:
 
     st.markdown("### 📸 カメラ / 画像から単語を取り込み")
-    st.write("単語帳や書類を撮影、または画像ファイルを選択して、自動でリスト化します。")
-    
-    capture_method = st.radio("取り込み方法を選択", ["ファイルから選択 (ギャラリー・フォルダ)", "カメラで撮影"])
-    
-    if capture_method == "ファイルから選択 (ギャラリー・フォルダ)":
-        uploaded_file = st.file_uploader("画像ファイルを選択 (PNG, JPG, JPEGなど)", type=["png", "jpg", "jpeg"])
-    else:
-        uploaded_file = st.camera_input("カメラで撮影")
-        
-    # ----------------------------------------------------
-    # ① 単語データの保存・復元機能（自動結合バージョン）
-    # ----------------------------------------------------
-    st.markdown("### ☁️ クラウドデータベースへの保存")
-    st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
-    
-    if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
-        if not st.session_state.vocab_list:
-            st.warning("保存する単語がありません。先に画像から単語を追加してください。")
-        else:
-            with st.spinner("クラウドDBに保存中..."):
-                try:
-                    # DBへの保存関数を呼び出し
-                    save_words_to_turso(st.session_state.vocab_list)
-                    st.success("✅ クラウドDBに保存しました！フラッシュカードタブで読み込んでください。")
-                except Exception as e:
-                    st.error(f"保存中にエラーが発生しました: {e}")
-            
-        
-    # ----------------------------------------------------
-    # ② 画像・カメラからの取り込み＆単語変換機能
-    # ----------------------------------------------------
-    st.markdown("#### 📷 画像の取り込みと単語変換")
-    
-    input_method = st.radio("取り込み方法を選択", ["ファイルから選択（ギャラリー・フォルダ）", "カメラで撮影"], horizontal=True)
-    
+    st.write(
+        "単語帳や書類を撮影、または画像ファイルを選択して、"
+        "自動で単語リスト化します。"
+    )
+
+    input_method = st.radio(
+        "取り込み方法を選択",
+        [
+            "ファイルから選択（ギャラリー・フォルダ）",
+            "カメラで撮影"
+        ],
+        horizontal=True,
+        key="image_input_method"
+    )
+
     image_to_process = None
-    
+
     if input_method == "カメラで撮影":
-        use_camera = st.checkbox("カメラを有効にする")
-        if use_camera:
-            image_to_process = st.camera_input("カメラで撮影")
+        image_to_process = st.camera_input(
+            "カメラで撮影",
+            key="vocab_camera"
+        )
     else:
-        image_to_process = st.file_uploader("画像ファイルを選択（PNG, JPG, JPEGなど）", type=["png", "jpg", "jpeg"], key="img_uploader")
+        image_to_process = st.file_uploader(
+            "画像ファイルを選択（PNG, JPG, JPEGなど）",
+            type=["png", "jpg", "jpeg"],
+            key="img_uploader"
+        )
 
     if image_to_process is not None:
-        st.image(image_to_process, caption="選択・撮影された画像", use_container_width=True)
-        
-        if st.button("✨ この画像から単語を抽出する", type="primary"):
+
+        st.image(
+            image_to_process,
+            caption="選択・撮影された画像",
+            use_container_width=True
+        )
+
+        if st.button(
+            "✨ この画像から単語を抽出する",
+            type="primary",
+            use_container_width=True,
+            key="extract_vocab_from_image"
+        ):
+
             with st.spinner("Geminiが画像を解析して単語を抽出中..."):
+
                 try:
                     img = Image.open(image_to_process)
-                    target_lang = "英語" if lang == 'en' else "ドイツ語"
-                    
-                    import google.generativeai as genai
-                    model = genai.GenerativeModel("gemini-3.6-flash")
-                    
-                    prompt = f"""
-                    この画像に含まれる{target_lang}の単語を抽出し、以下のJSON形式の配列でのみ出力してください。
-                    マークダウン（```json など）は一切含めず、純粋なJSON文字列だけを返してください。
-                    [
-                      {{"word": "抽出した単語1", "meaning": "日本語の訳1"}},
-                      {{"word": "抽出した単語2", "meaning": "日本語の訳2"}}
-                    ]
-                    """
-                    
-                    response = model.generate_content([prompt, img])
-                    
-                    result_text = response.text.strip()
-                    if result_text.startswith("```json"):
-                        result_text = result_text[7:]
-                    if result_text.startswith("```"):
-                        result_text = result_text[3:]
-                    if result_text.endswith("```"):
-                        result_text = result_text[:-3]
-                        
-                    extracted_items = json.loads(result_text.strip())
-                    
-                    if extracted_items:
-                        if 'vocab_list' not in st.session_state:
-                            st.session_state.vocab_list = []
-                        
-                        existing_words = {item.get('word') for item in st.session_state.vocab_list if isinstance(item, dict)}
-                        new_added = 0
-                        for item in extracted_items:
-                            if isinstance(item, dict) and item.get('word') and item.get('word') not in existing_words:
-                                st.session_state.vocab_list.append(item)
-                                existing_words.add(item.get('word'))
-                                new_added += 1
-                        
-                        st.success(f"{new_added}件の単語を新しく追加しました！（合計: {len(st.session_state.vocab_list)}件）")
+
+                    if lang == "en":
+                        target_lang = "英語"
+                    elif lang == "de":
+                        target_lang = "ドイツ語"
                     else:
-                        st.warning("画像から単語を検出できませんでした。別の画像でお試しください。")
+                        target_lang = "中国語"
+
+                    prompt = f"""
+この画像に含まれる{target_lang}の重要な単語やフレーズを抽出してください。
+
+以下のJSON形式の配列のみを返してください。
+Markdownや```jsonは使用しないでください。
+
+[
+  {{"word": "apple", "meaning": "りんご"}},
+  {{"word": "negotiation", "meaning": "交渉"}}
+]
+"""
+
+                    # 現在のアプリで使用している
+                    # google.genai クライアントを利用
+                    response = st.session_state["_client"].models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=[
+                            types.Part.from_text(text=prompt),
+                            types.Part.from_bytes(
+                                data=image_to_process.getvalue(),
+                                mime_type=image_to_process.type
+                            )
+                        ]
+                    )
+
+                    result_text = response.text.strip()
+
+                    result_text = re.sub(
+                        r"^```(?:json)?\s*",
+                        "",
+                        result_text
+                    )
+
+                    result_text = re.sub(
+                        r"\s*```$",
+                        "",
+                        result_text
+                    )
+
+                    extracted_items = json.loads(
+                        result_text.strip()
+                    )
+
+                    if extracted_items:
+
+                        existing_words = {
+                            item.get("word")
+                            for item in st.session_state.vocab_list
+                            if isinstance(item, dict)
+                        }
+
+                        new_added = 0
+
+                        for item in extracted_items:
+
+                            if (
+                                isinstance(item, dict)
+                                and item.get("word")
+                                and item.get("word") not in existing_words
+                            ):
+                                st.session_state.vocab_list.append(item)
+                                existing_words.add(item.get("word"))
+                                new_added += 1
+
+                        st.success(
+                            f"{new_added}件の単語を新しく追加しました！"
+                            f"（合計: {len(st.session_state.vocab_list)}件）"
+                        )
+
+                    else:
+                        st.warning(
+                            "画像から単語を検出できませんでした。"
+                        )
+
                 except json.JSONDecodeError:
-                    st.error("AIからのデータ受け取りに失敗しました。もう一度「抽出する」ボタンを押してください。")
+                    st.error(
+                        "AIからのJSONデータ受け取りに失敗しました。"
+                        "もう一度お試しください。"
+                    )
+
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
-                   
-                    st.divider()
-        st.subheader("☁️ クラウドDBへプール")
-        # 既にリストにデータが存在する場合のみ保存ボタンを表示
-        if st.session_state.get('vocab_list'):
-            if st.button("💾 この単語リストをクラウドDBに保存する", use_container_width=True):
-                with st.spinner("データベースに保存中..."):
-                    # アプリ本体で管理されている vocab_list を保存
-                    saved_count = save_words_to_turso(st.session_state.vocab_list)
-                    st.success(f"{saved_count} 件の単語をクラウドDB（Turso）にプールしました！")
-        else:
-            st.info("画像を読み込んで単語を抽出すると、ここに保存ボタンが表示されます。")
+
+    # 現在の単語リスト
+    st.divider()
+    st.subheader("📝 現在の単語リスト")
+
+    if st.session_state.vocab_list:
+
+        for i, item in enumerate(st.session_state.vocab_list, 1):
+            st.markdown(
+                f"**{i}. {item.get('word', '')}** "
+                f"— {item.get('meaning', '')}"
+            )
+
+    else:
+        st.info(
+            "まだ単語がありません。"
+            "画像から単語を抽出してください。"
+        )
         
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
-    st.markdown("### ☁️ クラウドデータベースへの保存")
-    st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
 
-    if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
+    st.markdown("### ☁️ クラウドデータベースへの保存")
+    st.write(
+        "リストに追加した単語をクラウドに保存し、"
+        "フラッシュカードで使えるようにします。"
+    )
+
+    if st.button(
+        "💾 現在の単語リストをクラウドDBに保存",
+        use_container_width=True,
+        key="tab8_save_vocab_to_turso"
+    ):
         if not st.session_state.vocab_list:
-            st.warning("保存する単語がありません。先に画像から単語を追加してください。")
+            st.warning(
+                "保存する単語がありません。"
+                "先に「📸 画像単語」タブで単語を追加してください。"
+            )
         else:
             with st.spinner("クラウドDBに保存中..."):
                 try:
-                    save_words_to_turso(st.session_state.vocab_list)
-                    st.success("✅ クラウドDBに保存しました！フラッシュカードタブで読み込んでください。")
+                    saved_count = save_words_to_turso(
+                        st.session_state.vocab_list
+                    )
+
+                    st.success(
+                        f"✅ {saved_count}件の単語を"
+                        "クラウドDBに保存しました！"
+                    )
+
                 except Exception as e:
-                    st.error(f"保存中にエラーが発生しました: {e}")
+                    st.error(
+                        f"保存中にエラーが発生しました: {e}"
+                    )
 
     st.divider()
 
