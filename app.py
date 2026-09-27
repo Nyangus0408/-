@@ -125,66 +125,78 @@ def save_words_to_turso(word_list):
         conn.close()
 
 
-def load_words_from_turso():
-    conn = get_db_conn()
+def save_words_to_turso(vocab_list, lang_code):
+    conn = get_turso_connection()
+    if not conn: return 0
+    
+    # 【重要】過去のデータベースに「language（言語）」の枠を自動追加（すでにある場合はスキップ）
+    try:
+        conn.execute("ALTER TABLE vocabulary ADD COLUMN language TEXT")
+        conn.commit()
+    except:
+        pass 
 
-    if not conn:
-        return []
+    count = 0
+    try:
+        for item in vocab_list:
+            word = item.get("word", "")
+            meaning = item.get("meaning", "")
+            example = item.get("example", "")
+            
+            # lang_code（言語情報）を含めて保存
+            conn.execute("""
+                INSERT INTO vocabulary (word, meaning, example, language)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(word) DO UPDATE SET 
+                    meaning=excluded.meaning, 
+                    example=excluded.example,
+                    language=excluded.language
+            """, (word, meaning, example, lang_code))
+            count += 1
+        conn.commit()
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
+    finally:
+        conn.close()
+    return count
+
+def load_words_from_turso(lang_code):
+    conn = get_turso_connection()
+    if not conn: return []
+    
+    # 【重要】ここでも念のため言語枠の追加を実行
+    try:
+        conn.execute("ALTER TABLE vocabulary ADD COLUMN language TEXT")
+        conn.commit()
+    except:
+        pass
 
     try:
         cursor = conn.cursor()
+        # 選択した言語、または昔保存した言語未設定(NULL)の単語だけを読み込む
         cursor.execute("""
-            SELECT word, meaning, example
-            FROM vocabulary
-            ORDER BY created_at DESC
-        """)
-
+            SELECT id, word, meaning, example, language 
+            FROM vocabulary 
+            WHERE language = ? OR language IS NULL
+            ORDER BY id DESC
+        """, (lang_code,))
         rows = cursor.fetchall()
-
-        return [
-            {
-                "word": row[0],
-                "meaning": row[1],
-                "example": row[2]
-            }
-            for row in rows
-        ]
-
+        return [{"id": row[0], "word": row[1], "meaning": row[2], "example": row[3], "language": row[4]} for row in rows]
+    except Exception as e:
+        st.error(f"読み込みエラー: {e}")
+        return []
     finally:
         conn.close()
 
-
-def load_words_for_review():
-    conn = get_db_conn()
-
-    if not conn:
-        return []
-
+# 新規追加：クラウドDBから特定の単語を削除する関数
+def delete_word_from_turso(word_id):
+    conn = get_turso_connection()
+    if not conn: return
     try:
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT id, word, meaning, example
-            FROM vocabulary
-            ORDER BY
-                CASE WHEN last_reviewed IS NULL THEN 0 ELSE 1 END,
-                last_reviewed ASC,
-                review_count ASC
-            LIMIT 10
-        """)
-
-        rows = cursor.fetchall()
-
-        return [
-            {
-                "id": row[0],
-                "word": row[1],
-                "meaning": row[2],
-                "example": row[3]
-            }
-            for row in rows
-        ]
-
+        conn.execute("DELETE FROM vocabulary WHERE id = ?", (word_id,))
+        conn.commit()
+    except Exception as e:
+        st.error(f"削除エラー: {e}")
     finally:
         conn.close()
 
@@ -1176,36 +1188,81 @@ Markdownや```jsonは使用しないでください。
 # ============================================================
 with tab8:
 
-    st.markdown("### ☁️ クラウドデータベースとの連携")
+    st.markdown("### ☁️ クラウド単語帳（言語別＆削除機能）")
+    
+    # ① 復習・保存する言語を選択するプルダウン
+    selected_vocab_lang = st.selectbox(
+        "📚 扱う言語を選択してください", 
+        ["English", "German", "Chinese"], 
+        key="vocab_lang_select"
+    )
     
     col_load, col_save = st.columns(2)
     
     with col_load:
-        if st.button("🔄 クラウドから単語をロード", use_container_width=True, key="tab8_load"):
+        if st.button(f"🔄 {selected_vocab_lang} をロード", use_container_width=True, key="tab8_load"):
             with st.spinner("データを取得中..."):
-                db_words = load_words_from_turso()
+                # 選択された言語だけをロード
+                db_words = load_words_from_turso(selected_vocab_lang)
             if db_words:
                 st.session_state.vocab_list = db_words
-                st.success(f"✅ {len(db_words)} 件の単語を読み込みました！")
+                st.success(f"✅ {len(db_words)} 件の {selected_vocab_lang} 単語を読み込みました！")
                 import time
                 time.sleep(1)
                 st.rerun()
             else:
-                st.info("DBに保存されている単語はありません。")
+                st.session_state.vocab_list = [] # 空にする
+                st.info(f"DBに保存されている {selected_vocab_lang} の単語はありません。")
 
     with col_save:
-        if st.button("💾 現在のリストをクラウドに保存", use_container_width=True, key="tab8_save"):
+        if st.button("💾 現在のリストを保存", use_container_width=True, key="tab8_save"):
             if not st.session_state.vocab_list:
                 st.warning("保存する単語がありません。")
             else:
                 with st.spinner("クラウドDBに保存中..."):
                     try:
-                        saved_count = save_words_to_turso(st.session_state.vocab_list)
-                        st.success(f"✅ {saved_count}件の単語を保存しました！")
+                        # 選択された言語として保存
+                        saved_count = save_words_to_turso(st.session_state.vocab_list, selected_vocab_lang)
+                        st.success(f"✅ {saved_count}件の単語を {selected_vocab_lang} として保存しました！")
                     except Exception as e:
                         st.error(f"保存中にエラーが発生しました: {e}")
 
     st.divider()
+
+    # ② 単語リスト一覧と削除機能
+    if not st.session_state.get("vocab_list"):
+        st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
+    else:
+        st.markdown(f"#### 📖 {selected_vocab_lang} の単語リスト一覧")
+        
+        # リストの見出し行
+        col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
+        col_w.caption("単語")
+        col_m.caption("意味")
+        col_e.caption("例文")
+        col_d.caption("操作")
+        
+        # 単語データと「削除」ボタンの表示
+        for i, word_data in enumerate(st.session_state.vocab_list):
+            col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
+            col_w.write(f"**{word_data.get('word', '')}**")
+            col_m.write(word_data.get('meaning', ''))
+            col_e.write(word_data.get('example', ''))
+            
+            # DBに保存済み（idがある）単語のみ削除可能にする
+            if "id" in word_data:
+                with col_d:
+                    if st.button("🗑️ 削除", key=f"del_vocab_{word_data['id']}"):
+                        delete_word_from_turso(word_data["id"])
+                        st.success(f"「{word_data['word']}」を削除しました")
+                        st.session_state.vocab_list.pop(i) # 画面上からも消す
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+        
+        st.divider()
+        st.markdown("#### 🎴 フラッシュカード")
+        
 
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
