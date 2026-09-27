@@ -1027,21 +1027,21 @@ with tab7:
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
-        st.markdown("### ☁️ クラウドデータベースへの保存")
-        st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
-        
-        if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
-        if not st.session_state.vocab_list:
-                st.warning("保存する単語がありません。先に画像から単語を追加してください。")
-            else:
-                with st.spinner("クラウドDBに保存中..."):
-                    try:
-                        save_words_to_turso(st.session_state.vocab_list)
-                        st.success("✅ クラウドDBに保存しました！フラッシュカードタブで読み込んでください。")
-                    except Exception as e:
-                        st.error(f"保存中にエラーが発生しました: {e}")
+    st.markdown("### ☁️ クラウドデータベースへの保存")
+    st.write("リストに追加した単語をクラウドに保存し、フラッシュカードで使えるようにします。")
 
-    st.divider()
+    if st.button("💾 現在の単語リストをクラウドDBに保存", use_container_width=True):
+        if not st.session_state.vocab_list:
+            st.warning("保存する単語がありません。先に画像から単語を追加してください。")
+        else:
+            with st.spinner("クラウドDBに保存中..."):
+                try:
+                    save_words_to_turso(st.session_state.vocab_list)
+                    st.success("✅ クラウドDBに保存しました！フラッシュカードタブで読み込んでください。")
+                except Exception as e:
+                    st.error(f"保存中にエラーが発生しました: {e}")
+
+st.divider()
 
         if not st.session_state.vocab_list:
             st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
