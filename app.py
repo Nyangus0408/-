@@ -171,6 +171,47 @@ def save_words_to_turso(vocab_list, lang_code):
         conn.close()
     return count
 
+# 1. 選択した言語の単語をクラウドDBから一括削除する関数
+def delete_all_words_from_turso(lang_code):
+    conn = get_db_conn()
+    if not conn: return
+    try:
+        conn.execute("DELETE FROM vocabulary WHERE language = ? OR (language IS NULL AND ? = 'English')", (lang_code, lang_code))
+        conn.commit()
+    except Exception as e:
+        st.error(f"一括削除エラー: {e}")
+    finally:
+        conn.close()
+
+# 2. 既存のドイツ語単語に定冠詞（der/die/das）を一括付与する関数
+def auto_add_articles_to_vocab(vocab_list):
+    if not vocab_list: return vocab_list
+    
+    prompt = f"""
+以下のドイツ語単語リストを受け取り、名詞であるものにはすべて適切な定冠詞（der, die, das）を補完してください。
+すでに定冠詞がついているものや、動詞・形容詞などはそのまま維持してください。
+
+【入力リスト】
+{json.dumps(vocab_list, ensure_ascii=False)}
+
+【出力ルール】
+入力と同じJSON配列形式（[{{\"word\": \"...\", \"meaning\": \"...\"}}]）のみを返してください。
+Markdownや```jsonは含めないでください。
+"""
+    try:
+        response = st.session_state["_client"].models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt]
+        )
+        result_text = response.text.strip()
+        result_text = re.sub(r"^```(?:json)?\s*", "", result_text)
+        result_text = re.sub(r"\s*```$", "", result_text)
+        updated_list = json.loads(result_text.strip())
+        return updated_list
+    except Exception as e:
+        st.error(f"定冠詞の付与中にエラーが発生しました: {e}")
+        return vocab_list
+
 def load_words_from_turso(lang_code):
     conn = get_db_conn() # ← ここを修正しました
     if not conn: return []
@@ -1125,10 +1166,8 @@ with tab7:
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
 with tab8:
-
-    st.markdown("### ☁️ クラウド単語帳（言語別＆削除機能）")
+    st.markdown("### ☁️ クラウド単語帳（言語別＆管理機能）")
     
-    # ① 復習・保存する言語を選択するプルダウン
     selected_vocab_lang = st.selectbox(
         "📚 扱う言語を選択してください", 
         ["English", "German", "Chinese"], 
@@ -1140,7 +1179,6 @@ with tab8:
     with col_load:
         if st.button(f"🔄 {selected_vocab_lang} をロード", use_container_width=True, key="tab8_load"):
             with st.spinner("データを取得中..."):
-                # 選択された言語だけをロード
                 db_words = load_words_from_turso(selected_vocab_lang)
             if db_words:
                 st.session_state.vocab_list = db_words
@@ -1149,7 +1187,7 @@ with tab8:
                 time.sleep(1)
                 st.rerun()
             else:
-                st.session_state.vocab_list = [] # 空にする
+                st.session_state.vocab_list = []
                 st.info(f"DBに保存されている {selected_vocab_lang} の単語はありません。")
 
     with col_save:
@@ -1159,14 +1197,44 @@ with tab8:
             else:
                 with st.spinner("クラウドDBに保存中..."):
                     try:
-                        # 選択された言語として保存
                         saved_count = save_words_to_turso(st.session_state.vocab_list, selected_vocab_lang)
                         st.success(f"✅ {saved_count}件の単語を {selected_vocab_lang} として保存しました！")
                     except Exception as e:
                         st.error(f"保存中にエラーが発生しました: {e}")
 
-    # ===== （上のロード・保存ボタンなどの処理はそのまま） =====
+    # ▼▼▼ 便利機能・一括操作パネル ▼▼▼
     st.divider()
+    
+    col_tools1, col_tools2 = st.columns(2)
+    
+    # ドイツ語選択時のみ「定冠詞の一括補完」ボタンを表示
+    with col_tools1:
+        if selected_vocab_lang == "German" and st.session_state.get("vocab_list"):
+            if st.button("✨ 既存単語に定冠詞(der/die/das)を一括付与", use_container_width=True, type="secondary"):
+                with st.spinner("AIが名詞を判定して定冠詞を補完中..."):
+                    updated_vocab = auto_add_articles_to_vocab(st.session_state.vocab_list)
+                    st.session_state.vocab_list = updated_vocab
+                    # 補完後に自動でクラウド保存
+                    save_words_to_turso(updated_vocab, "German")
+                    st.success("✅ 定冠詞の補完と保存が完了しました！")
+                    import time
+                    time.sleep(1)
+                    st.rerun()
+
+    # 一括削除ボタン
+    with col_tools2:
+        if st.session_state.get("vocab_list"):
+            if st.button(f"🚨 {selected_vocab_lang} の全単語を一括削除", use_container_width=True, type="primary"):
+                delete_all_words_from_turso(selected_vocab_lang)
+                st.session_state.vocab_list = []
+                st.success(f"🗑️ {selected_vocab_lang} の単語をすべて削除しました。")
+                import time
+                time.sleep(1)
+                st.rerun()
+
+    st.divider()
+
+    # （※ここから下は既存の st.expander による単語リスト表示やフラッシュカード処理が続きます）
 
     if not st.session_state.get("vocab_list"):
         st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
