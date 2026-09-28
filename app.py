@@ -1105,15 +1105,14 @@ with tab7:
                     # AIに送るデータのリスト（最初はテキストプロンプト）
                     contents_to_send = [types.Part.from_text(text=prompt)]
                     
-                    # 選択された画像をすべて変換してリストに追加
-                   # 選択された画像をリサイズして軽量化しながらリストに追加
+                    # 選択された画像をリサイズして軽量化しながらリストに追加
                     for img_file in images_to_process:
                         img = Image.open(img_file)
                         if img.mode != "RGB":
                             img = img.convert("RGB")
                         
-                        # 【重要】メモリ溢れ防止：OCR用に十分なサイズ(1280px)に縮小
-                        img.thumbnail((1280, 1280))
+                        # 【重要】AIの処理負担を極限まで減らすため、800pxに縮小
+                        img.thumbnail((800, 800))
                         
                         buf = io.BytesIO()
                         img.save(buf, format="JPEG", quality=80)
@@ -1125,13 +1124,26 @@ with tab7:
                         
                         # メモリを明示的に解放
                         del img
+                        import gc
                         gc.collect()
 
-                    # まとめて1回だけAIにリクエストを送信
-                    response = st.session_state["_client"].models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=contents_to_send
-                    )
+                    # ▼▼▼【変更】AIへのリクエスト送信（自動リトライ付き）▼▼▼
+                    max_retries = 3
+                    response = None
+                    for attempt in range(max_retries):
+                        try:
+                            response = st.session_state["_client"].models.generate_content(
+                                model=GEMINI_MODEL,
+                                contents=contents_to_send
+                            )
+                            break  # 成功したらループを抜ける
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                import time
+                                time.sleep(5)  # 5秒待ってから自動で再試行
+                            else:
+                                raise e  # 3回とも失敗したらエラーを出す
+                    # ▲▲▲ ここまで ▲▲▲
 
                     result_text = response.text.strip()
                     result_text = re.sub(r"^```(?:json)?\s*", "", result_text)
