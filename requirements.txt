@@ -1,10 +1,9 @@
-streamlit>=1.35.0
-google-genai>=1.0.0
-gtts>=2.5.0
-pypdf>=4.0.0
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-google-generativeai
+streamlit
+google-genai
+gTTS
 Pillow
-libsql-experimental
 pillow-heif
+pypdf
+beautifulsoup4
+requests
+libsql-experimental
