@@ -1703,7 +1703,7 @@ with tab8:
 
     if not st.session_state.vocab_list:
         st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
-    else:
+        else:
         interval = st.slider(
             "単語表示から訳・音声が出るまでの時間（秒）",
             min_value=1.0,
@@ -1714,16 +1714,18 @@ with tab8:
         )
 
         vocab_json = json.dumps(st.session_state.vocab_list)
-       if selected_vocab_lang == "English":
-       lang_code = "en-US"
-       elif selected_vocab_lang == "German":
-       lang_code = "de-DE"
-       elif selected_vocab_lang == "Chinese":
-       lang_code = "zh-CN"
-       else:
-       lang_code = "en-US"
-        btn_color = C["main"]
 
+        if selected_vocab_lang == "English":
+            lang_code = "en-US"
+        elif selected_vocab_lang == "German":
+            lang_code = "de-DE"
+        elif selected_vocab_lang == "Chinese":
+            lang_code = "zh-CN"
+        else:
+            lang_code = "en-US"
+
+        btn_color = C["main"]
+    
         html_code = f"""
         <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
             
