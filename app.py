@@ -1701,9 +1701,9 @@ with tab8:
         st.markdown("#### 🎴 フラッシュカード")
         
 
-    if not st.session_state.vocab_list:
-        st.info("💡 まずは「📷 画像単語」タブで単語を追加してください。")
-        else:
+        if not st.session_state.get("vocab_list"):
+        st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
+    else:
         interval = st.slider(
             "単語表示から訳・音声が出るまでの時間（秒）",
             min_value=1.0,
@@ -1715,6 +1715,7 @@ with tab8:
 
         vocab_json = json.dumps(st.session_state.vocab_list)
 
+        # 選択した単語言語に合わせて音声言語を変更
         if selected_vocab_lang == "English":
             lang_code = "en-US"
         elif selected_vocab_lang == "German":
