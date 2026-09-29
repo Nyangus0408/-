@@ -1715,13 +1715,13 @@ with tab8:
 
         vocab_json = json.dumps(st.session_state.vocab_list)
        if selected_vocab_lang == "English":
-    lang_code = "en-US"
-elif selected_vocab_lang == "German":
-    lang_code = "de-DE"
-elif selected_vocab_lang == "Chinese":
-    lang_code = "zh-CN"
-else:
-    lang_code = "en-US"
+       lang_code = "en-US"
+       elif selected_vocab_lang == "German":
+       lang_code = "de-DE"
+       elif selected_vocab_lang == "Chinese":
+       lang_code = "zh-CN"
+       else:
+       lang_code = "en-US"
         btn_color = C["main"]
 
         html_code = f"""
