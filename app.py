@@ -1704,14 +1704,14 @@ with tab8:
         if not st.session_state.get("vocab_list"):
             st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
         else:
-        interval = st.slider(
-            "単語表示から訳・音声が出るまでの時間（秒）",
-            min_value=1.0,
-            max_value=4.0,
-            value=2.0,
-            step=0.5,
-            key="slider_word_interval_unique"
-        )
+            interval = st.slider(
+                "単語表示から訳・音声が出るまでの時間（秒）",
+                min_value=1.0,
+                max_value=4.0,
+                value=2.0,
+                step=0.5,
+                key="slider_word_interval_unique"
+            )
 
         vocab_json = json.dumps(st.session_state.vocab_list)
 
