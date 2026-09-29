@@ -1702,7 +1702,7 @@ with tab8:
         
 
         if not st.session_state.get("vocab_list"):
-        st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
+            st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
     else:
         interval = st.slider(
             "単語表示から訳・音声が出るまでの時間（秒）",
