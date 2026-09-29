@@ -12,11 +12,14 @@ import time
 import os
 import re
 import requests
+import hashlib
+import difflib
+from datetime import datetime, timezone
 from gtts import gTTS
 from PIL import Image
 import pillow_heif
 pillow_heif.register_heif_opener()
-import libsql_experimental as libsql
+libsql = None
 import gc  # ガベージコレクション（メモリ解放）用
 
 # ==========================================
@@ -186,8 +189,8 @@ def delete_all_words_from_turso(lang_code):
 
 # 2. 既存のドイツ語単語に定冠詞（der/die/das）を一括付与する関数
 def auto_add_articles_to_vocab(vocab_list):
-    if not vocab_list: return vocab_list
-    
+    if not vocab_list:
+        return vocab_list
     prompt = f"""
 以下のドイツ語単語リストを受け取り、名詞であるものにはすべて適切な定冠詞（der, die, das）を補完してください。
 すでに定冠詞がついているものや、動詞・形容詞などはそのまま維持してください。
@@ -200,15 +203,10 @@ def auto_add_articles_to_vocab(vocab_list):
 Markdownや```jsonは含めないでください。
 """
     try:
-        response = st.session_state["_client"].models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[prompt]
-        )
-        result_text = response.text.strip()
-        result_text = re.sub(r"^```(?:json)?\s*", "", result_text)
+        raw = call_text(prompt, task="vocab_articles", cache=True)
+        result_text = re.sub(r"^```(?:json)?\s*", "", raw)
         result_text = re.sub(r"\s*```$", "", result_text)
-        updated_list = json.loads(result_text.strip())
-        return updated_list
+        return json.loads(result_text.strip())
     except Exception as e:
         st.error(f"定冠詞の付与中にエラーが発生しました: {e}")
         return vocab_list
@@ -332,8 +330,135 @@ def delete_script_from_db(script_id):
     finally:
         conn.close()
         
-# ── MODEL NAME ──
-GEMINI_MODEL = "gemini-3.5-flash"
+# ============================================================
+# AI ROUTER / FREE-PRIORITY CONFIG
+# Gemini単独依存を避けるための共通AIルーター
+# ============================================================
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.8-27b:free")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "whisper-large-v3-turbo")
+
+# 503/429で同じプロバイダを叩き続けないためのクールダウン
+GEMINI_COOLDOWN_503 = 60
+GEMINI_COOLDOWN_429 = 600
+OPENROUTER_COOLDOWN = 600
+GROQ_COOLDOWN = 300
+OLLAMA_COOLDOWN = 60
+CACHE_MAX_ENTRIES = 128
+
+# 実際のAPIコール回数 / キャッシュヒット等を追跡
+def _init_ai_state():
+    defaults = {
+        "ai_usage": {"total": 0, "by_provider": {}, "by_task": {}, "cache_hits": 0},
+        "provider_cooldown": {},
+        "ai_cache": {},
+        "last_transcribe_hash": "",
+        "last_pronunciation_key": "",
+        "pronunciation_result": None,
+        "ai_last_message": "",
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+_init_ai_state()
+
+def _secret(name: str, default: str = "") -> str:
+    try:
+        value = st.secrets.get(name, "")
+        if value:
+            return str(value)
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+def _sha256_text(*parts) -> str:
+    h = hashlib.sha256()
+    for part in parts:
+        if isinstance(part, bytes):
+            h.update(part)
+        else:
+            h.update(str(part).encode("utf-8", errors="ignore"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _cache_get(key):
+    cache = st.session_state.get("ai_cache", {})
+    item = cache.get(key)
+    if item is None:
+        return None
+    st.session_state["ai_usage"]["cache_hits"] = st.session_state["ai_usage"].get("cache_hits", 0) + 1
+    return item.get("result") if isinstance(item, dict) else item
+
+
+def _cache_put(key, result, provider=""):
+    cache = st.session_state.setdefault("ai_cache", {})
+    if len(cache) >= CACHE_MAX_ENTRIES:
+        # FIFO的に最古の1件を削除
+        try:
+            cache.pop(next(iter(cache)))
+        except Exception:
+            cache.clear()
+    cache[key] = {"result": result, "provider": provider, "created_at": time.time()}
+
+
+def _provider_ready(provider: str) -> bool:
+    until = st.session_state.get("provider_cooldown", {}).get(provider, 0)
+    return time.time() >= until
+
+
+def _cooldown(provider: str, seconds: int):
+    st.session_state.setdefault("provider_cooldown", {})[provider] = time.time() + seconds
+
+
+def _cooldown_remaining(provider: str) -> int:
+    remain = int(st.session_state.get("provider_cooldown", {}).get(provider, 0) - time.time())
+    return max(0, remain)
+
+
+def _record_api(provider: str, task: str):
+    usage = st.session_state.setdefault("ai_usage", {"total": 0, "by_provider": {}, "by_task": {}, "cache_hits": 0})
+    usage["total"] = usage.get("total", 0) + 1
+    usage.setdefault("by_provider", {})[provider] = usage.setdefault("by_provider", {}).get(provider, 0) + 1
+    usage.setdefault("by_task", {})[task] = usage.setdefault("by_task", {}).get(task, 0) + 1
+
+
+def _classify_error(exc) -> int | None:
+    text = str(exc)
+    m = re.search(r"\b(408|429|500|502|503|504)\b", text)
+    if m:
+        return int(m.group(1))
+    upper = text.upper()
+    if "RESOURCE_EXHAUSTED" in upper or "TOO MANY REQUESTS" in upper:
+        return 429
+    if "UNAVAILABLE" in upper or "HIGH DEMAND" in upper:
+        return 503
+    return None
+
+
+def _extract_retry_after(exc) -> int | None:
+    m = re.search(r"retry[-_ ]after[\s:=]+(\d+)", str(exc), re.I)
+    return int(m.group(1)) if m else None
+
+
+def _gemini_client(api_key: str):
+    # Python SDK自身の自動リトライを実質1回に制限し、
+    # Router側のフェイルオーバーを優先する。
+    try:
+        retry_opts = types.HttpRetryOptions(
+            attempts=1,
+            http_status_codes=[408, 429, 500, 502, 503, 504],
+        )
+        return genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(retry_options=retry_opts),
+        )
+    except Exception:
+        return genai.Client(api_key=api_key)
 
 
 # ── CSS (ダーク・ハイコントラストテーマ) ─────────────────────────
@@ -591,73 +716,335 @@ def extract_url(url: str) -> str:
     except Exception as e: 
         return f"取得失敗: {e}"
 
-# ── NEW API WRAPPERS ─────────────────────────────────────────
-def call_text(prompt: str, system: str = "") -> str:
-    if not st.session_state.get("_client"): 
-        raise RuntimeError("APIクライアント未初期化")
+# ── FREE-PRIORITY AI ROUTER ───────────────────────────────────
+def _get_api_keys():
+    return {
+        "gemini": _secret("GEMINI_API_KEY") or _secret("API_KEY"),
+        "openrouter": _secret("OPENROUTER_API_KEY"),
+        "groq": _secret("GROQ_API_KEY"),
+    }
+
+
+def _call_gemini_text(prompt: str, system: str = "") -> str:
+    api_key = _get_api_keys()["gemini"]
+    if not api_key:
+        raise RuntimeError("Gemini APIキー未設定")
+    client = st.session_state.get("_client")
+    if client is None:
+        client = _gemini_client(api_key)
+        st.session_state["_client"] = client
     cfg = types.GenerateContentConfig(system_instruction=system) if system else None
-    resp = st.session_state["_client"].models.generate_content(
-        model=GEMINI_MODEL, 
-        contents=prompt, 
-        config=cfg
-    )
-    return resp.text
+    resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt, config=cfg)
+    return (resp.text or "").strip()
 
-def call_audio(prompt: str, audio_bytes: bytes) -> str:
-    if not st.session_state.get("_client"): 
-        raise RuntimeError("APIクライアント未初期化")
-    mime = detect_audio_mime(audio_bytes)
-    resp = st.session_state["_client"].models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            types.Part.from_text(text=prompt),
-            types.Part.from_bytes(data=audio_bytes, mime_type=mime)
-        ]
-    )
-    return resp.text
 
-def extract_vocab_from_image(img_bytes: bytes, mime_type: str, lang: str = 'en') -> list:
-    if not st.session_state.get("_client"): 
-        raise RuntimeError("APIクライアント未初期化")
-    
-    target_lang = "英語" if lang == 'en' else "ドイツ語"
-    prompt = f"""
-    この画像に含まれる重要な{target_lang}の単語やフレーズを抽出し、以下のJSONフォーマットのリストで出力してください。
-    Markdownの装飾は省き、純粋なJSON配列のみを出力してください。
-    [
-      {{"word": "apple", "meaning": "りんご"}},
-      {{"word": "negotiation", "meaning": "交渉"}}
-    ]
-    """
-    resp = st.session_state["_client"].models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            types.Part.from_text(text=prompt),
-            types.Part.from_bytes(data=img_bytes, mime_type=mime_type),
-        ],
+def _call_openrouter_text(prompt: str, system: str = "") -> str:
+    key = _get_api_keys()["openrouter"]
+    if not key:
+        raise RuntimeError("OpenRouter APIキー未設定")
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://streamlit.io",
+            "X-Title": "Pitch & Talk Pro",
+        },
+        json={
+            "model": OPENROUTER_MODEL,
+            "messages": messages,
+            "temperature": 0.2,
+        },
+        timeout=45,
     )
-    
-    text = resp.text.replace("```json\n", "").replace("```json", "").replace("\n```", "").replace("```", "").strip()
-    
-    try: 
-        return json.loads(text)
-    except Exception as e:
-        st.error(f"データの解析に失敗しました。詳細: {e}")
-        return []
+    if r.status_code >= 400:
+        raise RuntimeError(f"OpenRouter {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    return str(data["choices"][0]["message"]["content"]).strip()
+
+
+def _ollama_text(prompt: str, system: str = "", images: list[bytes] | None = None) -> str:
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    msg = {"role": "user", "content": prompt}
+    if images:
+        msg["images"] = [base64.b64encode(x).decode("ascii") for x in images]
+    messages.append(msg)
+    r = requests.post(
+        f"{OLLAMA_URL.rstrip('/')}/api/chat",
+        json={"model": OLLAMA_MODEL, "messages": messages, "stream": False, "options": {"temperature": 0.2}},
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Ollama {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    return str(data.get("message", {}).get("content", "")).strip()
+
+
+def call_text(prompt: str, system: str = "", task: str = "text_generate", cache: bool = True, preferred: str | None = None) -> str:
+    """無料優先のテキストRouter。Gemini→OpenRouter→Ollamaの順でフェイルオーバー。"""
+    key = _sha256_text("text", task, GEMINI_MODEL, OPENROUTER_MODEL, OLLAMA_MODEL, system, prompt)
+    if cache:
+        hit = _cache_get(key)
+        if hit is not None:
+            return hit
+
+    order = []
+    if preferred:
+        order.append(preferred)
+    for p in ("gemini", "openrouter", "ollama"):
+        if p not in order:
+            order.append(p)
+
+    errors = []
+    for provider in order:
+        if not _provider_ready(provider):
+            continue
+        try:
+            if provider == "gemini":
+                result = _call_gemini_text(prompt, system)
+            elif provider == "openrouter":
+                result = _call_openrouter_text(prompt, system)
+            else:
+                result = _ollama_text(prompt, system)
+            if not result:
+                raise RuntimeError("空の応答")
+            _record_api(provider, task)
+            if cache:
+                _cache_put(key, result, provider)
+            st.session_state["ai_last_message"] = f"{provider} / {task}"
+            return result
+        except Exception as e:
+            status = _classify_error(e)
+            errors.append(f"{provider}: {e}")
+            if provider == "gemini":
+                if status == 503:
+                    _cooldown(provider, GEMINI_COOLDOWN_503)
+                elif status == 429:
+                    _cooldown(provider, _extract_retry_after(e) or GEMINI_COOLDOWN_429)
+                elif status in (500, 502, 504, 408):
+                    _cooldown(provider, 30)
+            elif provider == "openrouter":
+                if status in (429, 500, 502, 503, 504):
+                    _cooldown(provider, OPENROUTER_COOLDOWN)
+            elif provider == "ollama":
+                _cooldown(provider, OLLAMA_COOLDOWN)
+            continue
+    raise RuntimeError("AIプロバイダを利用できません。\\n" + "\\n".join(errors[-4:]))
+
+
+def _call_groq_transcribe(audio_bytes: bytes, lang: str = "ja") -> str:
+    key = _get_api_keys()["groq"]
+    if not key:
+        raise RuntimeError("Groq APIキー未設定")
+    files = {"file": ("audio.webm", audio_bytes, "audio/webm")}
+    data = {
+        "model": GROQ_MODEL,
+        "language": lang,
+        "response_format": "text",
+    }
+    r = requests.post(
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {key}"},
+        files=files,
+        data=data,
+        timeout=60,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Groq {r.status_code}: {r.text[:500]}")
+    return r.text.strip()
+
+
+def call_audio(prompt: str, audio_bytes: bytes, system: str = "", task: str = "audio", cache: bool = True) -> str:
+    """音声処理。文字起こし系はGroq→Gemini、発音評価系はGeminiを優先。"""
+    audio_hash = hashlib.sha256(audio_bytes).hexdigest()
+    key = _sha256_text("audio", task, system, prompt, audio_hash)
+    if cache:
+        hit = _cache_get(key)
+        if hit is not None:
+            return hit
+
+    # 文字起こしはGroqを先に使用可能。発音評価はGeminiを優先。
+    if task == "transcribe":
+        providers = ["groq", "gemini"]
+    else:
+        providers = ["gemini", "openrouter"]  # OpenRouterは音声非対応なら次で失敗し、簡易代替へ
+
+    errors = []
+    for provider in providers:
+        if not _provider_ready(provider):
+            continue
+        try:
+            if provider == "groq":
+                result = _call_groq_transcribe(audio_bytes, "ja")
+            elif provider == "gemini":
+                api_key = _get_api_keys()["gemini"]
+                if not api_key:
+                    raise RuntimeError("Gemini APIキー未設定")
+                client = st.session_state.get("_client")
+                if client is None:
+                    client = _gemini_client(api_key)
+                    st.session_state["_client"] = client
+                mime = detect_audio_mime(audio_bytes)
+                contents = [types.Part.from_text(text=prompt), types.Part.from_bytes(data=audio_bytes, mime_type=mime)]
+                cfg = types.GenerateContentConfig(system_instruction=system) if system else None
+                resp = client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=cfg)
+                result = (resp.text or "").strip()
+            else:
+                # OpenRouterの無料モデルは音声入力を前提にしないため明示的に失敗させる。
+                raise RuntimeError("OpenRouter音声フォールバック未対応")
+
+            if not result:
+                raise RuntimeError("空の音声応答")
+            _record_api(provider, task)
+            if cache:
+                _cache_put(key, result, provider)
+            st.session_state["ai_last_message"] = f"{provider} / {task}"
+            return result
+        except Exception as e:
+            status = _classify_error(e)
+            errors.append(f"{provider}: {e}")
+            if provider == "gemini":
+                if status == 503:
+                    _cooldown(provider, GEMINI_COOLDOWN_503)
+                elif status == 429:
+                    _cooldown(provider, _extract_retry_after(e) or GEMINI_COOLDOWN_429)
+                elif status:
+                    _cooldown(provider, 30)
+            elif provider == "groq" and status in (429, 500, 502, 503, 504):
+                _cooldown(provider, GROQ_COOLDOWN)
+            continue
+
+    raise RuntimeError("音声AIを利用できません。\\n" + "\\n".join(errors[-4:]))
+
+
+def call_multimodal_images(prompt: str, image_bytes_list: list[bytes], task: str = "image_vocab", cache: bool = True) -> str:
+    """画像処理はOllama→OpenRouter→Gemini。自宅PCでは原則Ollamaを優先する。"""
+    joined = b"".join(image_bytes_list)
+    key = _sha256_text("images", task, OLLAMA_MODEL, OPENROUTER_MODEL, GEMINI_MODEL, prompt, joined)
+    if cache:
+        hit = _cache_get(key)
+        if hit is not None:
+            return hit
+
+    errors = []
+
+    # 1) 自宅PCのOllama（完全ローカル・APIクォータ消費なし）
+    if _provider_ready("ollama"):
+        try:
+            result = _ollama_text(prompt, "", image_bytes_list)
+            if result:
+                _record_api("ollama", task)
+                if cache:
+                    _cache_put(key, result, "ollama")
+                st.session_state["ai_last_message"] = f"ollama / {task}"
+                return result
+        except Exception as e:
+            errors.append(f"ollama: {e}")
+            _cooldown("ollama", OLLAMA_COOLDOWN)
+
+    # 2) OpenRouter無料モデル（クラウド・無料枠）
+    if _provider_ready("openrouter") and _get_api_keys()["openrouter"]:
+        try:
+            key_or = _get_api_keys()["openrouter"]
+            content = [{"type": "text", "text": prompt}]
+            for img_bytes in image_bytes_list:
+                data_url = "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode("ascii")
+                content.append({"type": "image_url", "image_url": {"url": data_url}})
+            r = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key_or}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://streamlit.io",
+                    "X-Title": "Pitch & Talk Pro",
+                },
+                json={"model": OPENROUTER_MODEL, "messages": [{"role": "user", "content": content}], "temperature": 0.2},
+                timeout=120,
+            )
+            if r.status_code >= 400:
+                raise RuntimeError(f"OpenRouter {r.status_code}: {r.text[:500]}")
+            result = str(r.json()["choices"][0]["message"]["content"]).strip()
+            _record_api("openrouter", task)
+            if cache:
+                _cache_put(key, result, "openrouter")
+            st.session_state["ai_last_message"] = f"openrouter / {task}"
+            return result
+        except Exception as e:
+            errors.append(f"openrouter: {e}")
+            status = _classify_error(e)
+            if status in (429, 500, 502, 503, 504):
+                _cooldown("openrouter", OPENROUTER_COOLDOWN)
+
+    # 3) Gemini Flash-Lite（最後のクラウドフォールバック）
+    if _provider_ready("gemini") and _get_api_keys()["gemini"]:
+        try:
+            client = st.session_state.get("_client")
+            if client is None:
+                client = _gemini_client(_get_api_keys()["gemini"])
+                st.session_state["_client"] = client
+            contents = [types.Part.from_text(text=prompt)]
+            for img_bytes in image_bytes_list:
+                contents.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+            resp = client.models.generate_content(model=GEMINI_MODEL, contents=contents)
+            result = (resp.text or "").strip()
+            _record_api("gemini", task)
+            if cache:
+                _cache_put(key, result, "gemini")
+            st.session_state["ai_last_message"] = f"gemini / {task}"
+            return result
+        except Exception as e:
+            errors.append(f"gemini: {e}")
+            status = _classify_error(e)
+            if status == 503:
+                _cooldown("gemini", GEMINI_COOLDOWN_503)
+            elif status == 429:
+                _cooldown("gemini", _extract_retry_after(e) or GEMINI_COOLDOWN_429)
+
+    raise RuntimeError("画像AIを利用できません。\\n" + "\\n".join(errors[-4:]))
+
 
 def do_generate(prompt: str, sys_p: str) -> dict:
-    raw = call_text(prompt, system=sys_p)
-    m = re.search(r'\{[\s\S]*\}', raw)
-    if not m: 
+    raw = call_text(prompt, system=sys_p, task="text_generate", cache=True)
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
         raise ValueError("JSONが見つかりません")
     return json.loads(m.group())
 
-def transcribe(audio_bytes: bytes, lang: str = 'en') -> tuple:
+
+def transcribe(audio_bytes: bytes, lang: str = "en") -> tuple:
     inst = "この音声を日本語として文字起こしし、テキストのみ出力してください。句読点は省略可。"
-    try: 
-        return call_audio(inst, audio_bytes).strip(), ""
-    except Exception as e: 
+    audio_hash = hashlib.sha256(audio_bytes).hexdigest()
+    st.session_state["last_transcribe_hash"] = audio_hash
+    try:
+        # Groq→Geminiのルーター。音声は同一ハッシュならキャッシュされる。
+        return call_audio(inst, audio_bytes, task="transcribe", cache=True).strip(), ""
+    except Exception as e:
         return "", str(e)
+
+
+def normalize_text_for_compare(text: str) -> str:
+    text = (text or "").lower()
+    text = re.sub(r"[^a-zA-Z0-9äöüÄÖÜßぁ-んァ-ヶ一-龠\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def fallback_pronunciation_score(reference: str, transcript: str) -> dict:
+    ref = normalize_text_for_compare(reference)
+    hyp = normalize_text_for_compare(transcript)
+    score = round(difflib.SequenceMatcher(None, ref, hyp).ratio() * 100)
+    return {
+        "score": score,
+        "transcript": transcript,
+        "good_words": hyp.split() if score >= 80 else [],
+        "bad_words": [] if score >= 80 else ["発話内容を確認"],
+        "feedback": "AI発音評価の代替として、音声認識された英文と正解文の一致度を表示しています。" if score < 100 else "音声認識結果が正解文と一致しました。",
+    }
 
 # ── PROMPT BUILDERS ──────────────────────────────────────────
 def build_prompt(topic, level_name, level_desc, lang):
@@ -719,9 +1106,9 @@ if not api_key:
     api_key = os.environ.get("GEMINI_API_KEY", "")
 
 if api_key and st.session_state["_client"] is None:
-    try: 
-        st.session_state["_client"] = genai.Client(api_key=api_key)
-    except Exception as e: 
+    try:
+        st.session_state["_client"] = _gemini_client(api_key)
+    except Exception as e:
         st.error(f"❌ クライアント初期化失敗: {e}")
 
 lang = st.session_state.language
@@ -749,7 +1136,7 @@ with st.sidebar:
         mk = st.text_input("🔑 Gemini API Key", type="password")
         if mk:
             api_key = mk
-            st.session_state["_client"] = genai.Client(api_key=mk)
+            st.session_state["_client"] = _gemini_client(mk)
             st.success("✅ APIキー設定済み")
         else:
             st.warning("⚠️ APIキー未設定")
@@ -760,6 +1147,28 @@ with st.sidebar:
         st.success("☁️ Turso DB 接続済み")
     else:
         st.warning("⚠️ Turso DB 未接続（一時保存のみ）")
+
+    # AIルーター状態
+    st.divider()
+    st.markdown("### 🤖 AIルーター")
+    usage = st.session_state.get("ai_usage", {})
+    st.caption(f"主系: Gemini {GEMINI_MODEL}")
+    st.caption(f"予備: OpenRouter {OPENROUTER_MODEL}")
+    st.caption(f"ローカル: Ollama {OLLAMA_MODEL}")
+    st.caption(f"音声文字起こし: Groq {GROQ_MODEL}（キー設定時）")
+    st.metric("今回のAPI呼び出し", usage.get("total", 0))
+    st.caption(f"キャッシュ利用: {usage.get('cache_hits', 0)}回")
+    provider_counts = usage.get("by_provider", {})
+    if provider_counts:
+        st.caption(" / ".join([f"{k}:{v}" for k,v in provider_counts.items()]))
+    for p in ("gemini", "openrouter", "groq", "ollama"):
+        rem = _cooldown_remaining(p)
+        if rem > 0:
+            st.warning(f"{p}: 一時停止 {rem}秒")
+    if st.button("🔄 AIプロバイダ一時停止を解除", key="reset_ai_cooldowns"):
+        st.session_state["provider_cooldown"] = {}
+        st.session_state["ai_last_message"] = "手動リセット"
+        st.rerun()
 
 # ── HEADER & MODE ────────────────────────────────────────────
 
@@ -957,37 +1366,49 @@ with tab3:
 # TAB 4: PRONUNCIATION
 # ============================================================
 with tab4:
-    if not data: 
+    if not data:
         st.markdown(ph("🎤 発音"), unsafe_allow_html=True)
     else:
         st.markdown(f"**この文を読んでください:**\n### {data.get('english','')}")
         rec = st.audio_input("録音", key="main_audio_record")
         if rec and st.session_state.get("_client"):
             if st.button("📈 採点する", type="primary", use_container_width=True):
-                with st.spinner("AIが発音を分析中..."):
-                    try:
-                        mime = detect_audio_mime(rec.getvalue())
-                        p_sys = f"あなたは{LS['name']}のネイティブ講師です。音声とスクリプトを比較し、JSONのみ出力。"
-                        p_msg = f"スクリプト: {data.get('english','')}\n\n{{'score':(0-100),'feedback':'日本語で改善点','good_points':'日本語で良い点'}}"
-                        resp = st.session_state["_client"].models.generate_content(
-                            model=GEMINI_MODEL,
-                            contents=[
-                                types.Part.from_text(text=p_msg),
-                                types.Part.from_bytes(data=rec.getvalue(), mime_type=mime)
-                            ],
-                            config=types.GenerateContentConfig(system_instruction=p_sys)
-                        )
-                        
-                        m = re.search(r'\{[\s\S]*\}', resp.text)
-                        if m:
-                            ev = json.loads(m.group())
-                            st.success(f"### 総合スコア: {ev.get('score', 0)} / 100")
-                            st.markdown(f"**✨ 良い点:** {ev.get('good_points', '')}")
-                            st.markdown(f"**🔧 改善点:** {ev.get('feedback', '')}")
-                        else: 
-                            st.error("❌ 採点フォーマットエラー")
-                    except Exception as e: 
-                        st.error(f"❌ エラー: {e}")
+                audio_bytes = rec.getvalue()
+                pron_key = _sha256_text("pron", data.get("english", ""), lang, audio_bytes)
+                cached = _cache_get(pron_key)
+                if cached is not None:
+                    st.session_state["pronunciation_result"] = cached
+                    st.session_state["last_pronunciation_key"] = pron_key
+                else:
+                    with st.spinner("AIが発音を分析中..."):
+                        try:
+                            p_sys = f"あなたは{LS['name']}のネイティブ講師です。音声とスクリプトを比較し、JSONのみ出力。"
+                            p_msg = f"スクリプト: {data.get('english','')}\n{{\"score\":0,\"transcript\":\"認識テキスト\",\"good_words\":[\"正解単語\"],\"bad_words\":[\"要練習単語\"],\"feedback\":\"日本語で改善点\"}}"
+                            try:
+                                raw = call_audio(p_msg, audio_bytes, system=p_sys, task="pronunciation", cache=True)
+                                m = re.search(r'\{[\s\S]*\}', raw)
+                                if not m:
+                                    raise ValueError("発音評価JSONが見つかりません")
+                                result = json.loads(m.group())
+                            except Exception:
+                                # Geminiが503/429等で利用できない場合、Groq文字起こし→文字一致度へ切替
+                                transcript = _call_groq_transcribe(audio_bytes, "ja") if _get_api_keys()["groq"] else ""
+                                if not transcript:
+                                    raise
+                                result = fallback_pronunciation_score(data.get("english", ""), transcript)
+
+                            st.session_state["pronunciation_result"] = result
+                            st.session_state["last_pronunciation_key"] = pron_key
+                            _cache_put(pron_key, result, "pronunciation")
+                        except Exception as e:
+                            st.error(f"❌ 発音評価エラー: {e}")
+
+                ev = st.session_state.get("pronunciation_result")
+                if ev:
+                    st.success(f"### 総合スコア: {ev.get('score', 0)} / 100")
+                    st.markdown(f"**✨ 良い点:** {ev.get('good_points', ', '.join(ev.get('good_words', [])))}")
+                    st.markdown(f"**🔧 改善点:** {ev.get('feedback', '')}")
+                    st.caption(f"認識テキスト: {ev.get('transcript', '')}")
 
 # ============================================================
 # TAB 5: PRACTICE
@@ -1026,20 +1447,20 @@ with tab6:
             with st.spinner("相手が返答中..."):
                 try:
                     cps = f"あなたは{persona}です。ユーザーが {lang} で話しかけます。2文以内のシンプルな {lang} で返答してください。"
-                    resp = call_text(cr, system=cps)
+                    resp = call_text(cr, system=cps, task="roleplay", cache=False)
                     st.session_state.chat_history.append({"role": "ai", "text": resp.strip()})
                     st.rerun()
                 except Exception as e: 
                     st.error(e)
 
 # ============================================================
-# TAB 7: 画像単語 (IMAGE VOCAB) - 複数一括読み込み対応版
+# TAB 7: 画像単語 (IMAGE VOCAB) - 無料優先Router版
 # ============================================================
 with tab7:
     st.markdown("### 📸 カメラ / 画像から単語を抽出")
     st.write(
         "単語帳や書類を撮影、または画像ファイルを選択して、自動で単語リスト化します。"
-        "**複数の画像を一度に選んで一括処理できます（HEIC対応）。**"
+        "**複数画像に対応。自宅PCではOllamaを最優先し、Geminiへの依存を抑えます。**"
     )
 
     input_method = st.radio(
@@ -1050,13 +1471,11 @@ with tab7:
     )
 
     images_to_process = []
-
     if input_method == "カメラで撮影":
         camera_image = st.camera_input("カメラで撮影", key="vocab_camera")
         if camera_image:
             images_to_process = [camera_image]
     else:
-        # accept_multiple_files=True で複数選択を可能に
         uploaded_images = st.file_uploader(
             "画像ファイルを選択（複数選択可。PNG, JPG, HEICなど）",
             type=["png", "jpg", "jpeg", "heic", "HEIC"],
@@ -1068,111 +1487,110 @@ with tab7:
 
     if images_to_process:
         st.write(f"📁 **{len(images_to_process)} 枚**の画像が選択されています。")
-        
-        # 選択された画像のプレビューを横並びで表示
         cols = st.columns(min(len(images_to_process), 3))
         for idx, img_file in enumerate(images_to_process):
             with cols[idx % 3]:
                 st.image(img_file, use_container_width=True)
 
         if st.button("✨ 選択した画像から単語を一括抽出する", type="primary", use_container_width=True, key="extract_vocab_from_images"):
-            with st.spinner("Geminiが画像を解析して単語を一括抽出中..."):
+            with st.spinner("AIが画像を解析して単語を抽出中..."):
                 try:
-                    # 言語ごとの設定とAIへの追加指示
                     if lang == "en":
                         target_lang = "英語"
                         extra_rule = ""
-                        example_json = '[\n  {"word": "apple", "meaning": "りんご"},\n  {"word": "negotiation", "meaning": "交渉"}\n]'
+                        example_json = '[{"word":"apple","meaning":"りんご"},{"word":"negotiation","meaning":"交渉"}]'
                     elif lang == "de":
                         target_lang = "ドイツ語"
-                        # ドイツ語の時だけ、AIに定冠詞をつけるよう強く指示する
-                        extra_rule = "【重要】抽出する単語が名詞の場合は、必ず先頭に定冠詞（der, die, das）を付けてください。"
-                        example_json = '[\n  {"word": "der Apfel", "meaning": "りんご"},\n  {"word": "die Verhandlung", "meaning": "交渉"}\n]'
+                        extra_rule = "【重要】名詞には定冠詞（der, die, das）を付けてください。"
+                        example_json = '[{"word":"der Apfel","meaning":"りんご"},{"word":"die Verhandlung","meaning":"交渉"}]'
                     else:
                         target_lang = "中国語"
                         extra_rule = ""
-                        example_json = '[\n  {"word": "苹果", "meaning": "りんご"},\n  {"word": "谈判", "meaning": "交渉"}\n]'
+                        example_json = '[{"word":"苹果","meaning":"りんご"},{"word":"谈判","meaning":"交渉"}]'
 
                     prompt = f"""
-これらの画像に含まれる{target_lang}の重要な単語やフレーズをすべて抽出してください。
-複数の画像がある場合は、すべての画像から抽出してください。
+これらの画像に含まれる{target_lang}の重要な単語やフレーズを抽出してください。
+複数画像がある場合は、すべての画像を確認してください。
 {extra_rule}
-
-以下のJSON形式の配列のみを返してください。Markdownや```jsonは使用しないでください。
-{example_json}
-
+出力はJSON配列のみ。Markdownや```jsonは禁止。
+例: {example_json}
 """
-                    # AIに送るデータのリスト（最初はテキストプロンプト）
-                    contents_to_send = [types.Part.from_text(text=prompt)]
-                    
-                    # 選択された画像をリサイズして軽量化しながらリストに追加
-                    for img_file in images_to_process:
-                        img = Image.open(img_file)
-                        if img.mode != "RGB":
-                            img = img.convert("RGB")
-                        # AIに送るデータのリスト
-                    contents_to_send = [types.Part.from_text(text=prompt)]
-                    
-                    # 画像を800pxに軽量化して追加
+
+                    # HEICをRGB JPEGへ統一。1回のGemini/OpenRouter送信を5枚に制限して過負荷を抑える。
+                    image_bytes_all = []
                     for img_file in images_to_process:
                         img = Image.open(img_file)
                         if img.mode != "RGB":
                             img = img.convert("RGB")
                         img.thumbnail((800, 800))
-                        
                         buf = io.BytesIO()
-                        img.save(buf, format="JPEG", quality=80)
-                        
-                        contents_to_send.append(
-                            types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
-                        )
+                        img.save(buf, format="JPEG", quality=78, optimize=True)
+                        image_bytes_all.append(buf.getvalue())
                         del img
-                        import gc
-                        gc.collect()
+                    gc.collect()
 
-                    # AIへの送信（リトライなしでシンプルに実行）
-                    response = st.session_state["_client"].models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=contents_to_send
-                    )
+                    extracted_items = []
+                    batch_size = 5
+                    total_batches = (len(image_bytes_all) + batch_size - 1) // batch_size
+                    failed_batches = 0
+                    for bidx in range(total_batches):
+                        batch = image_bytes_all[bidx * batch_size:(bidx + 1) * batch_size]
+                        st.caption(f"画像 {bidx*batch_size+1}～{min((bidx+1)*batch_size, len(image_bytes_all))} / {len(image_bytes_all)} を処理中")
+                        try:
+                            raw = call_multimodal_images(
+                                prompt,
+                                batch,
+                                task="image_vocab",
+                                cache=True,
+                            )
+                            clean = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+                            clean = re.sub(r"\s*```$", "", clean)
+                            batch_items = json.loads(clean)
+                            if isinstance(batch_items, list):
+                                extracted_items.extend(batch_items)
+                        except Exception as batch_exc:
+                            failed_batches += 1
+                            st.warning(f"⚠️ バッチ {bidx+1}/{total_batches} は処理できませんでした。以降のバッチを中止し、処理済み結果を保持します。\n{batch_exc}")
+                            break
 
-                    result_text = response.text.strip()
-                    result_text = re.sub(r"^```(?:json)?\s*", "", result_text)
-                    result_text = re.sub(r"\s*```$", "", result_text)
-
-                    extracted_items = json.loads(result_text.strip())
+                    # Python側で重複削除
+                    unique = {}
+                    for item in extracted_items:
+                        if isinstance(item, dict) and item.get("word"):
+                            w = str(item.get("word")).strip()
+                            unique[w.lower()] = {
+                                "word": w,
+                                "meaning": str(item.get("meaning", "")).strip(),
+                                "example": str(item.get("example", "")).strip(),
+                            }
+                    extracted_items = list(unique.values())
 
                     if extracted_items:
-                        existing_words = {
-                            item.get("word") for item in st.session_state.vocab_list if isinstance(item, dict)
-                        }
+                        if failed_batches:
+                            st.info(f"ℹ️ {total_batches - failed_batches} / {total_batches} バッチを処理しました。")
+                        existing_words = {str(item.get("word", "")).lower() for item in st.session_state.vocab_list if isinstance(item, dict)}
                         new_added = 0
-
                         for item in extracted_items:
-                            if isinstance(item, dict) and item.get("word") and item.get("word") not in existing_words:
+                            if item["word"].lower() not in existing_words:
                                 st.session_state.vocab_list.append(item)
-                                existing_words.add(item.get("word"))
+                                existing_words.add(item["word"].lower())
                                 new_added += 1
-
-                        st.success(f"🎉 {new_added}件の単語を新しく追加しました！（合計: {len(st.session_state.vocab_list)}件）")
+                        st.success(f"🎉 {new_added}件の単語を追加しました！（新規抽出: {len(extracted_items)}件 / 合計: {len(st.session_state.vocab_list)}件）")
                     else:
                         st.warning("画像から単語を検出できませんでした。")
-
                 except json.JSONDecodeError:
-                    st.error("AIからのJSONデータ受け取りに失敗しました。もう一度お試しください。")
+                    st.error("AIからJSON形式の結果を取得できませんでした。画像枚数を減らして再実行してください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
 
-    # 現在の単語リスト
     st.divider()
     st.subheader("📝 現在の単語リスト")
-
     if st.session_state.vocab_list:
         for i, item in enumerate(st.session_state.vocab_list, 1):
             st.markdown(f"**{i}. {item.get('word', '')}** — {item.get('meaning', '')}")
     else:
         st.info("まだ単語がありません。画像から単語を抽出してください。")
-        
+
 # ============================================================
 # TAB 8: FLASHCARDS (IMMERSIVE MODE)
 # ============================================================
