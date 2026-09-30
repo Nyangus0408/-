@@ -1837,8 +1837,18 @@ with tab8:
             $("fcPhase").textContent='🔊 音声を聞く…'; speak(item.word||'');
             if(!(await waitPauseAware(Number($("delayAudio").value)*1000,token))) return;
             $("fcPhase").textContent='🇯🇵 答えを確認'; $("fcMeaning").textContent=item.meaning||'';
+
+            // 自動再生ONなら、訳を表示した後もしばらく表示して次のカードへ進む
+            if($("autoMode").value==='on' && token===phaseToken && running) {{
+              if(!(await waitPauseAware(2500,token))) return;
+              if(token===phaseToken && running && !paused) nextCard();
+            }}
           }}
-          function nextCard() {{ pos=(pos+1)%order.length; if(running && $("autoMode").value==='on') showCard(true); else showCard(false); }}
+          function nextCard() {{
+            pos=(pos+1)%order.length;
+            if(running && $("autoMode").value==='on') showCard(true);
+            else showCard(false);
+          }}
 
           $("fcStart").onclick=()=>{{ if(!vocab.length)return; running=true; paused=false; $("fcStart").textContent='▶ 再生中'; showCard(true); }};
           $("fcPause").onclick=()=>{{
@@ -1851,7 +1861,21 @@ with tab8:
           $("fcShuffle").onclick=()=>{{ for(let i=order.length-1;i>0;i--){{const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}} pos=0; showCard(false); }};
           $("fcSpeak").onclick=()=>speak(current().word||'');
           $("fcHintBtn").onclick=()=>{{ const h=hintFor(current()); const k=String(current().id ?? current().word ?? ""); saved[k]=saved[k]||{{yes:0,no:0,difficulty:difficulty(current()),last:0,hints:0}}; saved[k].hints++; localStorage.setItem(storageKey,JSON.stringify(saved)); $("fcHint").textContent=h; $("fcHint").style.display='block'; $("fcPhase").textContent='💡 ヒント'; }};
-          function evaluate(result) {{ if(!vocab.length)return; const item=current(); saveState(null,result,item); window.speechSynthesis.cancel(); phaseToken++; running=false; paused=false; nextCard(); }}
+          function evaluate(result) {{
+            if(!vocab.length)return;
+            const item=current();
+            saveState(null,result,item);
+            window.speechSynthesis.cancel();
+            phaseToken++;
+            paused=false;
+            if($("autoMode").value==='on') {{
+              running=true;
+              nextCard();
+            }} else {{
+              running=false;
+              nextCard();
+            }}
+          }}
           $("fcYes").onclick=()=>evaluate('yes'); $("fcNo").onclick=()=>evaluate('no');
           $("fcCard").addEventListener('touchstart',e=>{{touchX=e.changedTouches[0].screenX;}},{{passive:true}});
           $("fcCard").addEventListener('touchend',e=>{{const dx=e.changedTouches[0].screenX-touchX;if(Math.abs(dx)>70) evaluate(dx>0?'yes':'no');}},{{passive:true}});
