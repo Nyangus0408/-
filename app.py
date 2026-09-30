@@ -1596,15 +1596,15 @@ with tab7:
 # ============================================================
 with tab8:
     st.markdown("### ☁️ クラウド単語帳（言語別＆管理機能）")
-    
+
     selected_vocab_lang = st.selectbox(
-        "📚 扱う言語を選択してください", 
-        ["English", "German", "Chinese"], 
+        "📚 扱う言語を選択してください",
+        ["English", "German", "Chinese"],
         key="vocab_lang_select"
     )
-    
+
     col_load, col_save = st.columns(2)
-    
+
     with col_load:
         if st.button(f"🔄 {selected_vocab_lang} をロード", use_container_width=True, key="tab8_load"):
             with st.spinner("データを取得中..."):
@@ -1613,7 +1613,7 @@ with tab8:
                 st.session_state.vocab_list = db_words
                 st.success(f"✅ {len(db_words)} 件の {selected_vocab_lang} 単語を読み込みました！")
                 import time
-                time.sleep(1)
+                time.sleep(0.5)
                 st.rerun()
             else:
                 st.session_state.vocab_list = []
@@ -1631,26 +1631,21 @@ with tab8:
                     except Exception as e:
                         st.error(f"保存中にエラーが発生しました: {e}")
 
-    # ▼▼▼ 便利機能・一括操作パネル ▼▼▼
     st.divider()
-    
     col_tools1, col_tools2 = st.columns(2)
-    
-    # ドイツ語選択時のみ「定冠詞の一括補完」ボタンを表示
+
     with col_tools1:
         if selected_vocab_lang == "German" and st.session_state.get("vocab_list"):
             if st.button("✨ 既存単語に定冠詞(der/die/das)を一括付与", use_container_width=True, type="secondary"):
                 with st.spinner("AIが名詞を判定して定冠詞を補完中..."):
                     updated_vocab = auto_add_articles_to_vocab(st.session_state.vocab_list)
                     st.session_state.vocab_list = updated_vocab
-                    # 補完後に自動でクラウド保存
                     save_words_to_turso(updated_vocab, "German")
                     st.success("✅ 定冠詞の補完と保存が完了しました！")
                     import time
-                    time.sleep(1)
+                    time.sleep(0.5)
                     st.rerun()
 
-    # 一括削除ボタン
     with col_tools2:
         if st.session_state.get("vocab_list"):
             if st.button(f"🚨 {selected_vocab_lang} の全単語を一括削除", use_container_width=True, type="primary"):
@@ -1658,296 +1653,217 @@ with tab8:
                 st.session_state.vocab_list = []
                 st.success(f"🗑️ {selected_vocab_lang} の単語をすべて削除しました。")
                 import time
-                time.sleep(1)
+                time.sleep(0.5)
                 st.rerun()
 
     st.divider()
 
-    # （※ここから下は既存の st.expander による単語リスト表示やフラッシュカード処理が続きます）
-
     if not st.session_state.get("vocab_list"):
         st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
     else:
-        # ▼▼▼【改善ポイント】単語リストを折りたたみ（アコーディオン）の中に収納 ▼▼▼
         with st.expander(f"📖 {selected_vocab_lang} の単語リスト一覧・編集（クリックで開閉）", expanded=False):
-            
-            # リストの見出し行
             col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
             col_w.caption("単語")
             col_m.caption("意味")
             col_e.caption("例文")
             col_d.caption("操作")
-            
-            # 単語データと「削除」ボタンの表示
             for i, word_data in enumerate(st.session_state.vocab_list):
                 col_w, col_m, col_e, col_d = st.columns([2, 2, 4, 1])
                 col_w.write(f"**{word_data.get('word', '')}**")
                 col_m.write(word_data.get('meaning', ''))
                 col_e.write(word_data.get('example', ''))
-                
-                # DBに保存済み（idがある）単語のみ削除可能にする
                 if "id" in word_data:
                     with col_d:
                         if st.button("🗑️ 削除", key=f"del_vocab_{word_data['id']}"):
                             delete_word_from_turso(word_data["id"])
-                            st.success(f"「{word_data['word']}」を削除しました")
-                            st.session_state.vocab_list.pop(i) # 画面上からも消す
-                            import time
-                            time.sleep(1)
+                            st.session_state.vocab_list.pop(i)
                             st.rerun()
 
         st.divider()
+        st.markdown("#### 🎴 フラッシュカード — Active Recall モード")
+        st.caption("文字で思い出す → 音声をヒントにする → もう一度考える → 必要ならヒント → 日本語訳 → 自己評価")
 
-        st.markdown("#### 🎴 フラッシュカード")
-        
+        # 3言語共通のフラッシュカード・エンジン。
+        # 学習状態（既知/未知、自己評価、進捗）はブラウザ localStorage に保存するため、
+        # Streamlit の再実行が発生しても、このカード内の学習記録は保持されます。
+        vocab_json = json.dumps(st.session_state.vocab_list, ensure_ascii=False).replace("</", "<\\/")
+        lang_code = {"English": "en-US", "German": "de-DE", "Chinese": "zh-CN"}.get(selected_vocab_lang, "en-US")
 
-        if not st.session_state.get("vocab_list"):
-            st.info("💡 単語リストが空です。上のボタンでロードするか、「📷 画像単語」タブで追加してください。")
-        else:
-            interval = st.slider(
-                "単語表示から訳・音声が出るまでの時間（秒）",
-                min_value=1.0,
-                max_value=4.0,
-                value=2.0,
-                step=0.5,
-                key="slider_word_interval_unique"
-            )
-
-        vocab_json = json.dumps(st.session_state.vocab_list)
-
-        # 選択した単語言語に合わせて音声言語を変更
-        if selected_vocab_lang == "English":
-            lang_code = "en-US"
-        elif selected_vocab_lang == "German":
-            lang_code = "de-DE"
-        elif selected_vocab_lang == "Chinese":
-            lang_code = "zh-CN"
-        else:
-            lang_code = "en-US"
-
-        btn_color = C["main"]
-    
         html_code = f"""
-        <div style="font-family: sans-serif; padding: 15px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155;">
-            
-            <!-- コントロールボタン群 -->
-            <div style="text-align: center; margin-bottom: 15px; display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;">
-                <button id="startBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: {btn_color}; border: none; border-radius: 8px; cursor: pointer;">
-                    ▶ スタート
-                </button>
-                <button id="stopBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: #ef4444; border: none; border-radius: 8px; cursor: pointer; display: none;">
-                    ■ 停止
-                </button>
-                <button id="resetBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: white; background-color: #64748b; border: none; border-radius: 8px; cursor: pointer;">
-                    🔄 最初から
-                </button>
-                <button id="shuffleBtn" style="padding: 10px 20px; font-size: 15px; font-weight: bold; color: #1e293b; background-color: #f8fafc; border: none; border-radius: 8px; cursor: pointer;">
-                    🔀 シャッフル: OFF
-                </button>
-            </div>
-            
-            <!-- フラッシュカード表示エリア -->
-            <div style="text-align: center; min-height: 140px; display: flex; flex-direction: column; justify-content: center; background: #0f172a; border-radius: 12px; padding: 20px; border: 1px solid #334155; margin-bottom: 20px;">
-                <div id="wordText" style="font-size: 34px; font-weight: 900; color: #ffffff; margin-bottom: 8px;">Ready...</div>
-                <div id="meaningText" style="font-size: 20px; font-weight: 700; color: {btn_color};">リストの単語を押すとそこから始まります</div>
-            </div>
+        <div id="fcApp" style="font-family:Arial,sans-serif;background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:18px;padding:18px;max-width:820px;margin:auto;box-sizing:border-box;">
+          <style>
+            #fcApp * {{ box-sizing:border-box; }}
+            .fc-top {{ display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px; }}
+            .fc-pill {{ background:#1e293b;border:1px solid #334155;border-radius:999px;padding:7px 12px;font-size:13px; }}
+            .fc-settings {{ display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px; }}
+            .fc-settings label {{ font-size:12px;color:#cbd5e1;display:block;margin-bottom:5px; }}
+            .fc-settings input {{ width:100%; }}
+            .fc-card {{ min-height:310px;background:#111827;border:1px solid #334155;border-radius:16px;padding:28px 18px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative; }}
+            .fc-word {{ font-size:clamp(32px,8vw,58px);font-weight:900;letter-spacing:.02em;margin:18px 0 8px;word-break:break-word; }}
+            .fc-meaning {{ font-size:25px;font-weight:800;color:#60a5fa;min-height:34px;margin:8px 0; }}
+            .fc-status {{ color:#94a3b8;font-size:14px;min-height:22px; }}
+            .fc-level {{ position:absolute;top:14px;right:14px;background:#1e293b;border:1px solid #475569;border-radius:10px;padding:5px 9px;font-size:12px;color:#fbbf24; }}
+            .fc-controls,.fc-eval {{ display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px; }}
+            .fc-btn {{ border:0;border-radius:10px;padding:11px 15px;font-weight:800;cursor:pointer;font-size:14px; }}
+            .fc-primary {{ background:{C["main"]};color:white; }}
+            .fc-dark {{ background:#334155;color:white; }}
+            .fc-hint {{ background:#7c3aed;color:white; }}
+            .fc-no {{ background:#b91c1c;color:white;flex:1;min-width:130px; }}
+            .fc-yes {{ background:#15803d;color:white;flex:1;min-width:130px; }}
+            .fc-btn:disabled {{ opacity:.45;cursor:not-allowed; }}
+            .fc-progress {{ height:8px;background:#1e293b;border-radius:999px;overflow:hidden;margin:14px 0 5px; }}
+            .fc-progress > div {{ height:100%;background:{C["main"]};width:0%;transition:width .2s; }}
+            .fc-hintbox {{ display:none;width:100%;max-width:650px;background:#1e293b;border:1px solid #475569;border-radius:12px;padding:13px;margin-top:10px;text-align:left;line-height:1.55; }}
+            .fc-list {{ max-height:220px;overflow:auto;margin-top:14px;border:1px solid #334155;border-radius:10px;background:#0b1220; }}
+            .fc-list-item {{ padding:10px 12px;border-bottom:1px solid #1e293b;cursor:pointer;display:flex;justify-content:space-between;gap:10px; }}
+            .fc-list-item:last-child {{ border-bottom:0; }}
+            .fc-list-item.active {{ background:{C["main"]}; }}
+            .fc-list-item small {{ color:#cbd5e1; }}
+            @media(max-width:600px) {{ .fc-settings {{ grid-template-columns:1fr; }} .fc-card {{ min-height:280px; }} }}
+          </style>
 
-            <!-- 単語リスト表示エリア -->
-            <div style="font-size: 14px; font-weight: bold; color: #cbd5e1; margin-bottom: 8px;">📋 単語リスト（クリックで再生開始）</div>
-            <div id="vocabList" style="height: 250px; overflow-y: auto; background-color: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 5px;">
-            </div>
+          <div class="fc-top">
+            <div class="fc-pill">🌐 {selected_vocab_lang}</div>
+            <div class="fc-pill" id="fcCount">1 / {len(st.session_state.vocab_list)}</div>
+            <div class="fc-pill" id="fcScore">○ 0　× 0</div>
+          </div>
+
+          <div class="fc-settings">
+            <div><label>文字→音声まで（秒）</label><input id="delayWord" type="range" min="1" max="8" step="0.5" value="3"><div id="delayWordVal" style="font-size:12px;color:#cbd5e1;text-align:center;">3.0秒</div></div>
+            <div><label>音声→訳まで（秒）</label><input id="delayAudio" type="range" min="1" max="8" step="0.5" value="3"><div id="delayAudioVal" style="font-size:12px;color:#cbd5e1;text-align:center;">3.0秒</div></div>
+            <div><label>自動再生</label><select id="autoMode" style="width:100%;padding:7px;background:#1e293b;color:white;border:1px solid #475569;border-radius:7px;"><option value="on">ON</option><option value="off">OFF</option></select></div>
+          </div>
+
+          <div class="fc-card" id="fcCard">
+            <div class="fc-level" id="fcLevel">Lv.3</div>
+            <div class="fc-status" id="fcPhase">準備完了</div>
+            <div class="fc-word" id="fcWord">Ready...</div>
+            <div class="fc-meaning" id="fcMeaning"></div>
+            <div class="fc-hintbox" id="fcHint"></div>
+          </div>
+
+          <div class="fc-progress"><div id="fcProgressBar"></div></div>
+
+          <div class="fc-controls">
+            <button class="fc-btn fc-primary" id="fcStart">▶ スタート</button>
+            <button class="fc-btn fc-dark" id="fcPause">⏸ 一時停止</button>
+            <button class="fc-btn fc-dark" id="fcReset">↻ 最初から</button>
+            <button class="fc-btn fc-dark" id="fcShuffle">🔀 シャッフル</button>
+            <button class="fc-btn fc-hint" id="fcHintBtn">💡 ヒント</button>
+            <button class="fc-btn fc-dark" id="fcSpeak">🔊 もう一度音声</button>
+          </div>
+
+          <div class="fc-eval">
+            <button class="fc-btn fc-no" id="fcNo">← まだ覚えていない</button>
+            <button class="fc-btn fc-yes" id="fcYes">覚えた →</button>
+          </div>
+
+          <div style="font-size:12px;color:#94a3b8;text-align:center;margin-top:9px;">スマホ：カードを左右にスワイプして自己評価できます。</div>
+          <div class="fc-list" id="fcList"></div>
         </div>
 
-        <style>
-            .list-item {{
-                padding: 12px; 
-                border-bottom: 1px solid #1e293b; 
-                color: #cbd5e1; 
-                cursor: pointer; 
-                border-radius: 6px;
-                transition: background 0.2s;
-            }}
-            .list-item:hover {{
-                background-color: #1e293b;
-            }}
-            .list-item.active {{
-                background-color: {btn_color};
-                color: white;
-            }}
-            #vocabList::-webkit-scrollbar {{ width: 8px; }}
-            #vocabList::-webkit-scrollbar-thumb {{ background: #475569; border-radius: 4px; }}
-        </style>
-
         <script>
-            const vocab = {vocab_json};
-            const waitBeforeAnswerMs = {int(interval * 1000)};
-            const waitAfterAnswerMs = 2500;
-            const langCode = "{lang_code}";
-            
-            let playOrder = vocab.map((_, i) => i);
-            let index = 0; 
-            let isPlaying = false;
-            let isShuffle = false;
-            let interrupt = false; 
-            let currentUtterance = null;
+        (() => {{
+          const vocab = {vocab_json};
+          const langCode = "{lang_code}";
+          const storageKey = "flashcard_v2_{selected_vocab_lang}";
+          const saved = JSON.parse(localStorage.getItem(storageKey) || '{{}}');
+          let order = vocab.map((_,i)=>i), pos=0, running=false, paused=false, phaseToken=0, scoreYes=0, scoreNo=0, touchX=0;
+          const $ = id => document.getElementById(id);
+          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-            const startBtn = document.getElementById('startBtn');
-            const stopBtn = document.getElementById('stopBtn');
-            const resetBtn = document.getElementById('resetBtn');
-            const shuffleBtn = document.getElementById('shuffleBtn');
-            const wordText = document.getElementById('wordText');
-            const meaningText = document.getElementById('meaningText');
-            const vocabListDiv = document.getElementById('vocabList');
+          function current() {{ return vocab[order[pos % order.length]] || {{}}; }}
+          function difficulty(item) {{
+            const k = String(item.id ?? item.word ?? "");
+            const d = Number(saved[k]?.difficulty ?? item.difficulty ?? 3);
+            return Math.min(5, Math.max(1, d || 3));
+          }}
+          function renderList() {{
+            $("fcList").innerHTML = vocab.map((v,i) => `<div class="fc-list-item" data-i="${{i}}"><span><b>${{i+1}}. ${{escapeHtml(v.word||"")}}</b><br><small>${{escapeHtml(v.meaning||"")}}</small></span><span>Lv.${{difficulty(v)}}</span></div>`).join("");
+            document.querySelectorAll('.fc-list-item').forEach(el => el.addEventListener('click',()=>{{ pos=order.indexOf(Number(el.dataset.i)); if(pos<0) pos=0; phaseToken++; showCard(false); }}));
+          }}
+          function escapeHtml(x) {{ return String(x).replace(/[&<>"']/g,m=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m])); }}
+          function updateList() {{
+            document.querySelectorAll('.fc-list-item').forEach((el,i)=>el.classList.toggle('active', Number(el.dataset.i)===order[pos % order.length]));
+          }}
+          function saveState(key, result, item) {{
+            const k=String(item.id ?? item.word ?? "");
+            saved[k]=saved[k]||{{yes:0,no:0,difficulty:difficulty(item),last:0,hints:0}};
+            if(result==='yes') {{ saved[k].yes++; scoreYes++; }} else {{ saved[k].no++; scoreNo++; }}
+            saved[k].last=Date.now();
+            localStorage.setItem(storageKey,JSON.stringify(saved));
+            $("fcScore").textContent=`○ ${{scoreYes}}　× ${{scoreNo}}`;
+          }}
+          function setDelayLabels() {{ $("delayWordVal").textContent=Number($("delayWord").value).toFixed(1)+"秒"; $("delayAudioVal").textContent=Number($("delayAudio").value).toFixed(1)+"秒"; }}
+          $("delayWord").oninput=setDelayLabels; $("delayAudio").oninput=setDelayLabels;
 
-            function renderList() {{
-                vocabListDiv.innerHTML = '';
-                vocab.forEach((item, originalIdx) => {{
-                    const div = document.createElement('div');
-                    div.className = 'list-item';
-                    div.id = 'item-' + originalIdx;
-                    div.innerHTML = `<strong>${{originalIdx + 1}}. ${{item.word}}</strong> <span style="font-size:0.9em; opacity:0.8; margin-left:8px;">${{item.meaning}}</span>`;
-                    
-                    div.onclick = () => {{
-                        let pIdx = playOrder.indexOf(originalIdx);
-                        if (pIdx !== -1) {{
-                            index = pIdx;
-                            interrupt = true;
-                            window.speechSynthesis.cancel();
-                            if (!isPlaying) {{
-                                startBtn.click();
-                            }}
-                        }}
-                    }};
-                    vocabListDiv.appendChild(div);
-                }});
+          function speak(text) {{
+            if(!text) return;
+            window.speechSynthesis.cancel();
+            const u=new SpeechSynthesisUtterance(text); u.lang=langCode; u.rate=.9; window.speechSynthesis.speak(u);
+          }}
+          function hintFor(item) {{
+            if(item.hint) return item.hint;
+            if(item.example) return `例文：${{item.example}}`;
+            const w=String(item.word||"");
+            if(langCode==='de-DE') {{
+              const prefixes=['auf','an','aus','ein','mit','nach','vor','zu','ab','be','ent','er','ge','ver','zer'];
+              const p=prefixes.find(x=>w.toLowerCase().startsWith(x) && w.length>x.length+2);
+              if(p) return `語構成のヒント：${{p}} + ${'{'}w.slice(p.length)${'}'}\n（まず語幹から意味を連想してみましょう）`;
             }}
+            if(langCode==='zh-CN') return '漢字を1文字ずつ見て、意味の手がかりを探してみましょう。';
+            return '類義語・使われる場面を思い出してみましょう。';
+          }}
+          function showCard(auto=true) {{
+            if(!vocab.length) return;
+            const item=current(); const token=++phaseToken;
+            $("fcCount").textContent=`${{pos+1}} / ${{vocab.length}}`;
+            $("fcProgressBar").style.width=`${{((pos+1)/vocab.length)*100}}%`;
+            $("fcLevel").textContent=`Lv.${{difficulty(item)}}`;
+            $("fcWord").textContent=item.word||''; $("fcMeaning").textContent=''; $("fcHint").style.display='none'; $("fcHint").textContent='';
+            $("fcPhase").textContent='まず自力で思い出す…'; updateList();
+            if(auto && $("autoMode").value==='off') return;
+            runCard(item,token);
+          }}
+          async function waitPauseAware(ms,token) {{
+            const end=Date.now()+ms;
+            while(Date.now()<end && running && !paused && token===phaseToken) await sleep(80);
+            while(paused && running && token===phaseToken) await sleep(100);
+            return running && !paused && token===phaseToken;
+          }}
+          async function runCard(item,token) {{
+            running=true; paused=false; $("fcPause").textContent='⏸ 一時停止';
+            if(!(await waitPauseAware(Number($("delayWord").value)*1000,token))) return;
+            $("fcPhase").textContent='🔊 音声を聞く…'; speak(item.word||'');
+            if(!(await waitPauseAware(Number($("delayAudio").value)*1000,token))) return;
+            $("fcPhase").textContent='🇯🇵 答えを確認'; $("fcMeaning").textContent=item.meaning||'';
+          }}
+          function nextCard() {{ pos=(pos+1)%order.length; if(running && $("autoMode").value==='on') showCard(true); else showCard(false); }}
 
-            renderList();
-
-            function updateHighlight(originalIdx) {{
-                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
-                const activeEl = document.getElementById('item-' + originalIdx);
-                if (activeEl) {{
-                    activeEl.classList.add('active');
-                    activeEl.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                }}
-            }}
-
-            function shuffleArray(array) {{
-                for (let i = array.length - 1; i > 0; i--) {{
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [array[i], array[j]] = [array[j], array[i]];
-                }}
-            }}
-
-            shuffleBtn.addEventListener('click', () => {{
-                isShuffle = !isShuffle;
-                shuffleBtn.innerText = isShuffle ? "🔀 シャッフル: ON" : "🔀 シャッフル: OFF";
-                shuffleBtn.style.backgroundColor = isShuffle ? "#f59e0b" : "#f8fafc";
-                shuffleBtn.style.color = isShuffle ? "white" : "#1e293b";
-                
-                playOrder = vocab.map((_, i) => i);
-                if (isShuffle) {{
-                    shuffleArray(playOrder);
-                }}
-                index = 0;
-                interrupt = true;
-
-                if (!isPlaying) {{
-                    wordText.innerText = "Order Updated";
-                    meaningText.innerText = "順番が変更されました";
-                }}
-            }});
-
-            const sleep = async (ms) => {{
-                let waited = 0;
-                while (waited < ms && isPlaying && !interrupt) {{
-                    await new Promise(r => setTimeout(r, 100));
-                    waited += 100;
-                }}
-            }};
-
-            function speakText(text) {{
-                if (!text) return;
-                if (window.speechSynthesis.paused) window.speechSynthesis.resume();
-                window.speechSynthesis.cancel();
-                
-                currentUtterance = new SpeechSynthesisUtterance(text);
-                currentUtterance.lang = langCode;
-                currentUtterance.rate = 0.9;
-                window.speechSynthesis.speak(currentUtterance);
-            }}
-
-            async function playLoop() {{
-                while (isPlaying) {{
-                    interrupt = false;
-
-                    if (index >= vocab.length) {{
-                        index = 0;
-                    }}
-                    
-                    let originalIdx = playOrder[index];
-                    const current = vocab[originalIdx];
-                    
-                    updateHighlight(originalIdx);
-                    
-                    wordText.innerText = current.word;
-                    meaningText.innerText = "";
-                    
-                    await sleep(waitBeforeAnswerMs);
-
-                    if (!isPlaying) break;
-                    if (interrupt) continue;
-                    
-                    meaningText.innerText = current.meaning;
-                    speakText(current.word);
-                    
-                    await sleep(waitAfterAnswerMs);
-
-                    if (!isPlaying) break;
-                    if (interrupt) continue;
-                    
-                    index++;
-                }}
-            }}
-
-            startBtn.addEventListener('click', () => {{
-                const unlockAudio = new SpeechSynthesisUtterance('');
-                window.speechSynthesis.speak(unlockAudio);
-                
-                startBtn.style.display = 'none';
-                stopBtn.style.display = 'inline-block';
-                
-                isPlaying = true;
-                playLoop();
-            }});
-
-            stopBtn.addEventListener('click', () => {{
-                isPlaying = false;
-                window.speechSynthesis.cancel();
-                startBtn.style.display = 'inline-block';
-                stopBtn.style.display = 'none';
-                wordText.innerText = "Stopped";
-                meaningText.innerText = "一時停止中（▶で続きから）";
-            }});
-
-            resetBtn.addEventListener('click', () => {{
-                isPlaying = false;
-                interrupt = true;
-                window.speechSynthesis.cancel();
-                index = 0;
-                startBtn.style.display = 'inline-block';
-                stopBtn.style.display = 'none';
-                wordText.innerText = "Ready...";
-                meaningText.innerText = "最初に戻りました";
-                document.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
-            }});
+          $("fcStart").onclick=()=>{{ if(!vocab.length)return; running=true; paused=false; $("fcStart").textContent='▶ 再生中'; showCard(true); }};
+          $("fcPause").onclick=()=>{{
+            if(!running) {{ running=true; paused=false; showCard(true); return; }}
+            paused=!paused;
+            if(paused) {{ window.speechSynthesis.pause(); $("fcPhase").textContent='⏸ 一時停止中'; $("fcPause").textContent='▶ 再開'; }}
+            else {{ window.speechSynthesis.resume(); $("fcPhase").textContent='▶ 再開'; $("fcPause").textContent='⏸ 一時停止'; }}
+          }};
+          $("fcReset").onclick=()=>{{ phaseToken++; running=false; paused=false; window.speechSynthesis.cancel(); pos=0; scoreYes=scoreNo=0; $("fcScore").textContent='○ 0　× 0'; $("fcWord").textContent='Ready...'; $("fcMeaning").textContent=''; $("fcPhase").textContent='最初から'; updateList(); }};
+          $("fcShuffle").onclick=()=>{{ for(let i=order.length-1;i>0;i--){{const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}} pos=0; showCard(false); }};
+          $("fcSpeak").onclick=()=>speak(current().word||'');
+          $("fcHintBtn").onclick=()=>{{ const h=hintFor(current()); const k=String(current().id ?? current().word ?? ""); saved[k]=saved[k]||{{yes:0,no:0,difficulty:difficulty(current()),last:0,hints:0}}; saved[k].hints++; localStorage.setItem(storageKey,JSON.stringify(saved)); $("fcHint").textContent=h; $("fcHint").style.display='block'; $("fcPhase").textContent='💡 ヒント'; }};
+          function evaluate(result) {{ if(!vocab.length)return; const item=current(); saveState(null,result,item); window.speechSynthesis.cancel(); phaseToken++; running=false; paused=false; nextCard(); }}
+          $("fcYes").onclick=()=>evaluate('yes'); $("fcNo").onclick=()=>evaluate('no');
+          $("fcCard").addEventListener('touchstart',e=>{{touchX=e.changedTouches[0].screenX;}},{{passive:true}});
+          $("fcCard").addEventListener('touchend',e=>{{const dx=e.changedTouches[0].screenX-touchX;if(Math.abs(dx)>70) evaluate(dx>0?'yes':'no');}},{{passive:true}});
+          document.addEventListener('keydown',e=>{{if(e.key==='ArrowRight')evaluate('yes'); if(e.key==='ArrowLeft')evaluate('no'); if(e.code==='Space')$("fcPause").click();}});
+          renderList(); setDelayLabels();
+          if(vocab.length) showCard(false);
+        }})();
         </script>
         """
 
-        st.components.v1.html(html_code, height=650, scrolling=False)
+        st.components.v1.html(html_code, height=850, scrolling=False)
 
-# ============================================================
 # TAB 9: SAVED (クラウド対応版)
 # ============================================================
 with tab9:
