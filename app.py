@@ -1809,7 +1809,7 @@ with tab8:
             if(langCode==='de-DE') {{
               const prefixes=['auf','an','aus','ein','mit','nach','vor','zu','ab','be','ent','er','ge','ver','zer'];
               const p=prefixes.find(x=>w.toLowerCase().startsWith(x) && w.length>x.length+2);
-              if(p) return `語構成のヒント：${p} + ${w.slice(p.length)}（まず語幹から意味を連想してみましょう）`;
+              if(p) return `語構成のヒント：${{p}} + ${{w.slice(p.length)}}\n（まず語幹から意味を連想してみましょう）`;
             }}
             if(langCode==='zh-CN') return '漢字を1文字ずつ見て、意味の手がかりを探してみましょう。';
             return '類義語・使われる場面を思い出してみましょう。';
