@@ -696,6 +696,249 @@ def detect_audio_mime(data: bytes) -> str:
     if h[:3] == b'ID3' or (h[0] == 0xFF and (h[1] & 0xE0) == 0xE0): return 'audio/mp3'
     return 'audio/mp4'
 
+def render_kikkinagashi_html(scripts: list) -> str:
+    """
+    聞き流しモード用 HTML スライドショーを生成
+    - 暗い雨夜の書斎風背景 (Canvas アニメーション)
+    - 日本語 → 黄色ハイライト英語 → 単語分解 → 文法解説
+    - SpeechSynthesis による自動読み上げ + 自動進行
+    """
+    import json as _json
+    cards = []
+    for item in scripts:
+        english = item.get('english', '')
+        japanese = (item.get('english_jp', '')
+                    or item.get('source_ja', '')
+                    or item.get('_source_ja', ''))
+        grammar  = item.get('grammar', '')
+        vocab    = item.get('vocab', {})
+        il       = item.get('lang', item.get('_lang', 'en'))
+        tts_lang = 'de-DE' if il == 'de' else 'en-US'
+        flag     = '🇩🇪' if il == 'de' else '🇺🇸'
+        # vocab を [[word, meaning], ...] に変換
+        vocab_list = [[k, v] for k, v in vocab.items()][:5] if isinstance(vocab, dict) else []
+        # grammar は最初の 90 文字
+        grammar_short = grammar[:90] + ('…' if len(grammar) > 90 else '') if grammar else ''
+        if english:
+            cards.append({
+                'english': english,
+                'japanese': japanese,
+                'grammar': grammar_short,
+                'vocab': vocab_list,
+                'tts_lang': tts_lang,
+                'flag': flag,
+            })
+
+    if not cards:
+        return "<html><body style='color:white;background:#0c1628;text-align:center;padding:60px;font-family:sans-serif;'><h2>保存されたスクリプトがありません</h2><p>スクリプトを生成して保存してください。</p></body></html>"
+
+    cards_json = _json.dumps(cards, ensure_ascii=False)
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box;}}
+body{{
+  background:linear-gradient(160deg,#070e1e 0%,#0f2040 45%,#071428 100%);
+  font-family:-apple-system,'Hiragino Sans','Noto Sans JP',sans-serif;
+  color:white;height:640px;overflow:hidden;position:relative;user-select:none;
+}}
+#rainCanvas{{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;opacity:0.25;}}
+.city-glow{{
+  position:absolute;bottom:0;left:0;right:0;height:180px;
+  background:linear-gradient(to top,rgba(10,30,80,0.7) 0%,transparent 100%);
+  pointer-events:none;
+}}
+#counter{{
+  position:absolute;top:18px;left:22px;
+  font-size:26px;font-weight:900;color:rgba(255,255,255,0.9);
+  text-shadow:0 0 20px rgba(255,255,255,0.4);z-index:10;
+}}
+#langFlag{{
+  position:absolute;top:18px;right:22px;
+  font-size:22px;z-index:10;
+}}
+#card{{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100%;padding:60px 36px 90px;gap:14px;
+  transition:opacity 0.45s ease;
+}}
+#card.fade{{opacity:0;}}
+.jp-text{{
+  font-size:clamp(16px,3.5vw,22px);
+  color:rgba(255,255,255,0.88);
+  letter-spacing:2px;text-align:center;
+  text-shadow:0 2px 16px rgba(0,0,0,0.9);
+  font-weight:500;max-width:90%;
+}}
+.en-box{{
+  background:#FFE600;color:#000;
+  font-size:clamp(18px,4.5vw,34px);
+  font-weight:900;padding:14px 28px;border-radius:6px;
+  text-align:center;max-width:90%;word-break:break-word;
+  box-shadow:0 0 40px rgba(255,230,0,0.45);
+  animation:glow 2.5s ease-in-out infinite;
+  letter-spacing:0.3px;
+}}
+@keyframes glow{{
+  0%,100%{{box-shadow:0 0 40px rgba(255,230,0,0.4);}}
+  50%{{box-shadow:0 0 70px rgba(255,230,0,0.75);}}
+}}
+.vocab-row{{
+  display:flex;gap:20px;flex-wrap:wrap;justify-content:center;
+  max-width:85%;min-height:40px;
+}}
+.vocab-item{{display:flex;flex-direction:column;align-items:center;gap:3px;}}
+.vocab-word{{font-size:14px;font-weight:700;color:rgba(255,255,255,0.95);}}
+.vocab-meaning{{font-size:11px;color:rgba(180,210,255,0.8);}}
+.grammar-text{{
+  font-size:clamp(12px,2vw,14px);color:#00e8cc;
+  text-align:center;max-width:82%;line-height:1.6;
+  font-weight:500;text-shadow:0 0 18px rgba(0,232,204,0.5);
+  min-height:36px;
+}}
+#controls{{
+  position:absolute;bottom:18px;left:50%;transform:translateX(-50%);
+  display:flex;gap:10px;align-items:center;z-index:20;
+}}
+.cbtn{{
+  background:rgba(255,255,255,0.12);
+  border:1px solid rgba(255,255,255,0.28);
+  border-radius:50%;width:40px;height:40px;color:white;
+  font-size:16px;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;
+  transition:all 0.2s;backdrop-filter:blur(8px);
+}}
+.cbtn:hover{{background:rgba(255,255,255,0.28);transform:scale(1.12);}}
+.cbtn.play{{
+  width:50px;height:50px;font-size:20px;
+  background:rgba(255,230,0,0.18);border-color:#FFE600;
+}}
+.spd{{
+  background:rgba(255,255,255,0.1);
+  border:1px solid rgba(255,255,255,0.25);
+  border-radius:20px;color:white;
+  padding:6px 12px;font-size:11px;cursor:pointer;outline:none;
+}}
+.spd option{{background:#0f2040;color:white;}}
+#prog{{
+  position:absolute;bottom:0;left:0;
+  height:3px;background:linear-gradient(90deg,#FFE600,#00e8cc);
+  transition:width linear;
+}}
+</style></head>
+<body>
+<canvas id="rainCanvas"></canvas>
+<div class="city-glow"></div>
+<div id="counter">1/{len(cards)}</div>
+<div id="langFlag">🇺🇸</div>
+<div id="card">
+  <div class="jp-text"  id="jpText">…</div>
+  <div class="en-box"   id="enBox">…</div>
+  <div class="vocab-row" id="vocabRow"></div>
+  <div class="grammar-text" id="grammarText"></div>
+</div>
+<div id="controls">
+  <button class="cbtn" onclick="prev()">⏮</button>
+  <button class="cbtn play" id="playBtn" onclick="toggle()">⏸</button>
+  <button class="cbtn" onclick="next()">⏭</button>
+  <select class="spd" onchange="setSpd(parseInt(this.value))">
+    <option value="5">5秒</option>
+    <option value="7">7秒（ゆっくり）</option>
+    <option value="10">10秒（じっくり）</option>
+    <option value="3">3秒（速め）</option>
+  </select>
+</div>
+<div id="prog" style="width:0%"></div>
+<script>
+const CARDS={cards_json};
+let idx=0,playing=true,speed=5000,timer=null;
+
+/* 雨アニメーション */
+const cv=document.getElementById('rainCanvas'),cx=cv.getContext('2d');
+cv.width=window.innerWidth;cv.height=window.innerHeight;
+const drops=Array.from({{length:90}},()=>({{
+  x:Math.random()*cv.width,y:Math.random()*cv.height,
+  len:Math.random()*22+8,spd:Math.random()*3+1.5,
+  op:Math.random()*0.35+0.08
+}}));
+(function rain(){{
+  cx.clearRect(0,0,cv.width,cv.height);
+  drops.forEach(d=>{{
+    cx.strokeStyle=`rgba(174,214,241,${{d.op}})`;cx.lineWidth=0.5;
+    cx.beginPath();cx.moveTo(d.x,d.y);cx.lineTo(d.x-1,d.y+d.len);cx.stroke();
+    d.y+=d.spd;if(d.y>cv.height){{d.y=-d.len;d.x=Math.random()*cv.width;}}
+  }});requestAnimationFrame(rain);
+}})();
+
+/* TTS */
+function speak(text,lang){{
+  try{{
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang=lang||'en-US';u.rate=0.85;u.pitch=1.0;
+    window.speechSynthesis.speak(u);
+  }}catch(e){{}}
+}}
+
+/* カード表示 */
+function showCard(i,autoSpeak=true){{
+  if(!CARDS.length)return;
+  idx=((i%CARDS.length)+CARDS.length)%CARDS.length;
+  const c=CARDS[idx];
+  const card=document.getElementById('card');
+  card.classList.add('fade');
+  setTimeout(()=>{{
+    document.getElementById('counter').textContent=(idx+1)+'/'+CARDS.length;
+    document.getElementById('langFlag').textContent=c.flag||'🇺🇸';
+    document.getElementById('jpText').textContent=c.japanese||'';
+    document.getElementById('enBox').textContent=c.english||'';
+    const vr=document.getElementById('vocabRow');vr.innerHTML='';
+    (c.vocab||[]).forEach(([w,m])=>{{
+      const d=document.createElement('div');d.className='vocab-item';
+      d.innerHTML=`<div class="vocab-word">${{w}}</div><div class="vocab-meaning">${{m}}</div>`;
+      vr.appendChild(d);
+    }});
+    document.getElementById('grammarText').textContent=c.grammar||'';
+    card.classList.remove('fade');
+    if(autoSpeak)setTimeout(()=>speak(c.english,c.tts_lang),500);
+    startProg();
+  }},380);
+}}
+
+function startProg(){{
+  const p=document.getElementById('prog');
+  p.style.transition='none';p.style.width='0%';
+  setTimeout(()=>{{p.style.transition=`width ${{speed/1000}}s linear`;p.style.width='100%';}},60);
+}}
+
+function schedNext(){{
+  clearTimeout(timer);
+  if(playing)timer=setTimeout(()=>{{showCard(idx+1);schedNext();}},speed);
+}}
+
+function toggle(){{
+  playing=!playing;
+  document.getElementById('playBtn').textContent=playing?'⏸':'▶️';
+  if(playing){{showCard(idx);schedNext();}}
+  else{{clearTimeout(timer);window.speechSynthesis.cancel();
+    const p=document.getElementById('prog');p.style.transition='none';}}
+}}
+
+function next(){{clearTimeout(timer);showCard(idx+1);if(playing)schedNext();}}
+function prev(){{clearTimeout(timer);showCard(idx-1);if(playing)schedNext();}}
+function setSpd(s){{speed=s*1000;if(playing){{clearTimeout(timer);schedNext();}}}}
+
+showCard(0);schedNext();
+
+/* iOS unlock */
+document.addEventListener('touchstart',function i(){{
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+  document.removeEventListener('touchstart',i);
+}},{{once:true}});
+</script></body></html>"""
+
 def extract_pdf(file) -> str:
     if not PDF_OK: 
         return "※ requirements.txt に pypdf を追加してください"
@@ -1892,7 +2135,57 @@ with tab8:
 # ============================================================
 with tab9:
     db_scripts = load_scripts_from_db()
-    
+
+    # ── 全スクリプトを結合（聞き流し用）
+    all_scripts_for_kiki = db_scripts + st.session_state.get("saved_list", [])
+
+    # ── 聞き流しモード ──────────────────────────────────────
+    st.markdown(f"""
+<div style="background:linear-gradient(135deg,#0f172a,#1e3a5f);border-radius:16px;
+     padding:18px 22px;margin-bottom:16px;border:1px solid rgba(255,255,255,0.1);">
+  <div style="font-size:18px;font-weight:900;color:white;margin-bottom:6px;">
+    🎬 聞き流しモード</div>
+  <div style="font-size:12px;color:rgba(255,255,255,.65);line-height:1.7;">
+    保存したスクリプトを雨夜の書斎風スライドショーで自動再生します。<br>
+    日本語 → 英語（黄色ハイライト）→ 単語分解 → 文法解説 の順に表示。<br>
+    TTS音声付き・自動進行・スピード調整可能。
+  </div>
+  <div style="margin-top:10px;font-size:11px;color:rgba(255,230,0,.8);">
+    📚 利用可能スクリプト: <strong style="color:#FFE600;">{len(all_scripts_for_kiki)}件</strong>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    if "kiki_mode_on" not in st.session_state:
+        st.session_state.kiki_mode_on = False
+
+    col_kiki1, col_kiki2 = st.columns([1, 1])
+    with col_kiki1:
+        if st.button("🎬 聞き流しスタート",
+                     type="primary", use_container_width=True,
+                     key="kiki_start",
+                     disabled=len(all_scripts_for_kiki) == 0):
+            st.session_state.kiki_mode_on = True
+    with col_kiki2:
+        if st.button("✕ 閉じる", use_container_width=True,
+                     key="kiki_close",
+                     disabled=not st.session_state.kiki_mode_on):
+            st.session_state.kiki_mode_on = False
+
+    if st.session_state.kiki_mode_on and all_scripts_for_kiki:
+        kiki_html = render_kikkinagashi_html(all_scripts_for_kiki)
+        st.components.v1.html(kiki_html, height=640, scrolling=False)
+        st.markdown("""
+<div style="background:#0f172a;border-radius:12px;padding:12px 16px;
+     margin-top:8px;font-size:12px;color:rgba(255,255,255,.6);">
+  💡 <strong style="color:#FFE600;">操作方法:</strong>
+  ⏮ 前へ ／ ⏸ 一時停止 ／ ⏭ 次へ ／ 速度選択<br>
+  🔊 音声が出ない場合は画面を一度タップしてください（iOS対策）
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
     if not db_scripts and not st.session_state.saved_list:
         st.markdown(ph("📚 保存帳"), unsafe_allow_html=True)
     else:
