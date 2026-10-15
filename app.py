@@ -273,63 +273,225 @@ try:
     LIBSQL_OK = True
 except ImportError:
     LIBSQL_OK = False
+def _ensure_scripts_table(conn):
+    """既存の scripts テーブルを維持し、必要な場合だけ作成する。"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS scripts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            content TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+
+def _ensure_script_review_table(conn):
+    """学習履歴は本文テーブルと分離し、既存の保存データを変更しない。"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS script_review_state (
+            script_id TEXT PRIMARY KEY,
+            review_status TEXT NOT NULL DEFAULT 'new',
+            last_reviewed_at TEXT,
+            next_review_at TEXT,
+            correct_streak INTEGER NOT NULL DEFAULT 0,
+            fail_count INTEGER NOT NULL DEFAULT 0,
+            hint_count INTEGER NOT NULL DEFAULT 0,
+            review_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT
+        )
+    """)
+
+
+def _normalize_saved_script(row):
+    """DB行を聞き流し・保存帳・復習で共用する形式へ変換する。"""
+    if not row:
+        return None
+    try:
+        if "content" in row or "content_json" in row:
+            content = row.get("content", row.get("content_json", {}))
+        else:
+            # セッション内の保存済み辞書はそのまま正規化する
+            content = row
+        if isinstance(content, bytes):
+            content = content.decode("utf-8", errors="replace")
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                # 古いDBに本文テキストだけが保存されている場合も表示できるようにする
+                content = {"english": content}
+        if not isinstance(content, dict):
+            content = {"english": str(content or "")}
+        item = dict(content)
+        db_id = row.get("id", item.get("_db_id", item.get("id")))
+        title = row.get("title") or item.get("_title") or item.get("title") or item.get("_source_ja") or "無題のスクリプト"
+        item["id"] = db_id
+        item["_db_id"] = db_id
+        item["_title"] = str(title)
+        item["title"] = str(title)
+        item["_created_at"] = str(row.get("created_at") or item.get("_created_at") or "")
+        item["english"] = str(item.get("english") or item.get("chunked") or "")
+        item["english_jp"] = str(item.get("english_jp") or item.get("source_ja") or item.get("_source_ja") or "")
+        item["grammar"] = str(item.get("grammar") or "")
+        if not isinstance(item.get("vocab", {}), dict):
+            item["vocab"] = {}
+        lang = str(item.get("lang") or item.get("_lang") or "en").lower()
+        item["lang"] = "de" if lang.startswith("de") or "ドイツ" in lang else ("zh" if lang.startswith("zh") or "中国" in lang else "en")
+        item["_lang"] = item["lang"]
+        # 復習状態のキーはDB IDを優先。セッション内カードは本文ハッシュで識別する。
+        item["_review_id"] = f"db:{db_id}" if db_id is not None else "local:" + hashlib.sha256((item["english"] + "|" + item["english_jp"]).encode("utf-8")).hexdigest()[:24]
+        return item
+    except Exception:
+        return None
+
+
 def load_scripts_from_db():
     conn = get_db_conn()
-    if not conn: return []
+    if not conn:
+        return []
     try:
-        cursor = conn.cursor()
-        # テーブルが存在しない場合は自動作成
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS scripts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT,
-                content TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        _ensure_scripts_table(conn)
         conn.commit()
-        
-        cursor.execute("SELECT id, title, content FROM scripts ORDER BY id DESC")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, content, created_at FROM scripts ORDER BY id DESC")
         rows = cursor.fetchall()
-        return [{"id": row[0], "title": row[1], "content": row[2]} for row in rows]
+        items = []
+        for row in rows:
+            normalized = _normalize_saved_script({"id": row[0], "title": row[1], "content": row[2], "created_at": row[3] if len(row) > 3 else ""})
+            if normalized and normalized.get("english"):
+                items.append(normalized)
+        return items
     except Exception as e:
         st.error(f"スクリプト読み込みエラー: {e}")
         return []
     finally:
         conn.close()
 
+
 def save_script_to_db(title, content):
+    """保存成功時 True、失敗・DB未接続時 False を返す。"""
     conn = get_db_conn()
-    if not conn: return
+    if not conn:
+        return False
     try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS scripts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT,
-                content TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("INSERT INTO scripts (title, content) VALUES (?, ?)", (title, content))
+        _ensure_scripts_table(conn)
+        content_text = json.dumps(content, ensure_ascii=False) if isinstance(content, (dict, list)) else str(content or "")
+        conn.execute("INSERT INTO scripts (title, content) VALUES (?, ?)", (str(title or "無題のスクリプト"), content_text))
         conn.commit()
+        return True
     except Exception as e:
         st.error(f"スクリプト保存エラー: {e}")
+        return False
     finally:
         conn.close()
 
+
 def delete_script_from_db(script_id):
     conn = get_db_conn()
-    if not conn: return
+    if not conn:
+        return False
     try:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM scripts WHERE id = ?", (script_id,))
+        conn.execute("DELETE FROM scripts WHERE id = ?", (script_id,))
+        # 復習履歴も該当IDのみ削除。本文データの削除が成功した場合に実行。
+        try:
+            conn.execute("DELETE FROM script_review_state WHERE script_id = ?", (f"db:{script_id}",))
+        except Exception:
+            pass
         conn.commit()
+        return True
     except Exception as e:
         st.error(f"スクリプト削除エラー: {e}")
+        return False
     finally:
         conn.close()
-        
+
+
+def load_script_review_states(script_ids):
+    """復習状態を取得。DB未接続時は空辞書を返す。"""
+    conn = get_db_conn()
+    if not conn:
+        return {}
+    try:
+        _ensure_script_review_table(conn)
+        conn.commit()
+        ids = [str(x) for x in script_ids if x]
+        if not ids:
+            return {}
+        placeholders = ",".join(["?"] * len(ids))
+        cur = conn.execute(f"SELECT script_id, review_status, last_reviewed_at, next_review_at, correct_streak, fail_count, hint_count, review_count FROM script_review_state WHERE script_id IN ({placeholders})", ids)
+        result = {}
+        for r in cur.fetchall():
+            result[str(r[0])] = {"status": r[1], "last_reviewed_at": r[2], "next_review_at": r[3], "correct_streak": int(r[4] or 0), "fail_count": int(r[5] or 0), "hint_count": int(r[6] or 0), "review_count": int(r[7] or 0)}
+        return result
+    except Exception as e:
+        st.warning(f"復習履歴の読み込みに失敗しました（保存済みスクリプトは利用できます）: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def save_script_review(script, rating):
+    """評価を即時保存し、次回復習日時を設定する。rating: again / hint / easy"""
+    review_id = str(script.get("_review_id") or "")
+    if not review_id:
+        return False
+    conn = get_db_conn()
+    if not conn:
+        # DBが使えないときはセッション内だけ保持
+        states = st.session_state.setdefault("local_script_review_state", {})
+        old = states.get(review_id, {})
+        _update_review_record(old, rating)
+        states[review_id] = old
+        return False
+    try:
+        _ensure_script_review_table(conn)
+        cur = conn.execute("SELECT review_status, correct_streak, fail_count, hint_count, review_count FROM script_review_state WHERE script_id = ?", (review_id,))
+        row = cur.fetchone()
+        old = {"status": row[0], "correct_streak": int(row[1] or 0), "fail_count": int(row[2] or 0), "hint_count": int(row[3] or 0), "review_count": int(row[4] or 0)} if row else {}
+        updated = _update_review_record(old, rating)
+        now = datetime.now(timezone.utc)
+        next_at = now + updated["interval"]
+        now_text = now.isoformat(timespec="seconds")
+        next_text = next_at.isoformat(timespec="seconds")
+        conn.execute("""INSERT INTO script_review_state
+            (script_id, review_status, last_reviewed_at, next_review_at, correct_streak, fail_count, hint_count, review_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(script_id) DO UPDATE SET review_status=excluded.review_status,
+            last_reviewed_at=excluded.last_reviewed_at, next_review_at=excluded.next_review_at,
+            correct_streak=excluded.correct_streak, fail_count=excluded.fail_count,
+            hint_count=excluded.hint_count, review_count=excluded.review_count, updated_at=excluded.updated_at
+        """, (review_id, updated["status"], now_text, next_text, updated["correct_streak"], updated["fail_count"], updated["hint_count"], updated["review_count"], now_text))
+        conn.commit()
+        return True
+    except Exception as e:
+        st.error(f"復習評価の保存に失敗しました: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def _update_review_record(old, rating):
+    """SM-2風の簡易間隔設定。学習用の初期ヒューリスティック。"""
+    from datetime import timedelta
+    state = {"status": old.get("status", "new"), "correct_streak": int(old.get("correct_streak", 0)), "fail_count": int(old.get("fail_count", 0)), "hint_count": int(old.get("hint_count", 0)), "review_count": int(old.get("review_count", 0))}
+    state["review_count"] += 1
+    if rating == "again":
+        state["status"] = "weak"
+        state["correct_streak"] = 0
+        state["fail_count"] += 1
+        interval = timedelta(minutes=10)
+    elif rating == "hint":
+        state["status"] = "learning"
+        state["correct_streak"] = 0
+        state["hint_count"] += 1
+        interval = timedelta(days=1)
+    else:
+        state["correct_streak"] += 1
+        state["status"] = "known" if state["correct_streak"] >= 2 else "learning"
+        interval = timedelta(days={1: 1, 2: 3, 3: 7, 4: 14}.get(state["correct_streak"], 30))
+    state["interval"] = interval
+    return state
+
 # ============================================================
 # AI ROUTER / FREE-PRIORITY CONFIG
 # Gemini単独依存を避けるための共通AIルーター
@@ -713,8 +875,8 @@ def render_kikkinagashi_html(scripts: list) -> str:
         grammar  = item.get('grammar', '')
         vocab    = item.get('vocab', {})
         il       = item.get('lang', item.get('_lang', 'en'))
-        tts_lang = 'de-DE' if il == 'de' else 'en-US'
-        flag     = '🇩🇪' if il == 'de' else '🇺🇸'
+        tts_lang = 'de-DE' if il == 'de' else ('zh-CN' if il == 'zh' else 'en-US')
+        flag     = '🇩🇪' if il == 'de' else ('🇨🇳' if il == 'zh' else '🇺🇸')
         # vocab を [[word, meaning], ...] に変換
         vocab_list = [[k, v] for k, v in vocab.items()][:5] if isinstance(vocab, dict) else []
         # grammar は最初の 90 文字
@@ -1585,9 +1747,15 @@ with tab2:
             if save_script_to_db(title, data):
                 st.success("☁️ クラウドデータベースに保存しました！「📚 保存帳」で確認できます。")
             else:
-                if data not in st.session_state.saved_list:
-                    data['title'] = title
-                    st.session_state.saved_list.append(data)
+                # DB未接続時のみ一時保存。重複は本文と日本語文で判定する。
+                duplicate = any(x.get("english") == data.get("english") and x.get("english_jp") == data.get("english_jp") for x in st.session_state.saved_list)
+                if not duplicate:
+                    local_data = dict(data)
+                    local_data['title'] = title
+                    local_data['_title'] = title
+                    local_data['_lang'] = local_data.get('lang', 'en')
+                    local_data['_review_id'] = "local:" + hashlib.sha256((str(local_data.get("english", "")) + "|" + str(local_data.get("english_jp", ""))).encode("utf-8")).hexdigest()[:24]
+                    st.session_state.saved_list.append(local_data)
                 st.warning("⚠️ クラウドDB未接続のため、このセッションに一時保存しました。")
 
 # ============================================================
@@ -2135,9 +2303,16 @@ with tab8:
 # ============================================================
 with tab9:
     db_scripts = load_scripts_from_db()
+    local_scripts = []
+    for _local_item in st.session_state.get("saved_list", []):
+        _normalized = _normalize_saved_script(_local_item)
+        if _normalized:
+            if not _normalized.get("_review_id"):
+                _normalized["_review_id"] = "local:" + hashlib.sha256((str(_normalized.get("english", "")) + "|" + str(_normalized.get("english_jp", ""))).encode("utf-8")).hexdigest()[:24]
+            local_scripts.append(_normalized)
 
-    # ── 全スクリプトを結合（聞き流し用）
-    all_scripts_for_kiki = db_scripts + st.session_state.get("saved_list", [])
+    # ── 全スクリプトを結合（聞き流し用・復習用）
+    all_scripts_for_kiki = db_scripts + local_scripts
 
     # ── 聞き流しモード ──────────────────────────────────────
     st.markdown(f"""
@@ -2185,34 +2360,145 @@ with tab9:
 """, unsafe_allow_html=True)
 
     st.markdown("---")
+    st.markdown("### 🧠 アクティブ・リコール復習")
+    st.caption("日本語を見て、まず声に出して英文を思い出します。5秒の思考時間の後に答えを表示し、評価はTursoへ即時保存します。")
 
-    if not db_scripts and not st.session_state.saved_list:
+    if all_scripts_for_kiki:
+        review_states = load_script_review_states([x.get("_review_id") for x in all_scripts_for_kiki])
+        review_states.update(st.session_state.get("local_script_review_state", {}))
+        now_utc = datetime.now(timezone.utc)
+
+        def _review_due(item):
+            state = review_states.get(item.get("_review_id"), {})
+            next_at = state.get("next_review_at")
+            if not next_at:
+                return True
+            try:
+                return datetime.fromisoformat(str(next_at).replace("Z", "+00:00")) <= now_utc
+            except Exception:
+                return True
+
+        def _review_priority(item):
+            state = review_states.get(item.get("_review_id"), {})
+            status = state.get("status", "new")
+            order = {"weak": 0, "learning": 1, "new": 2, "known": 3}
+            return (0 if _review_due(item) else 1, order.get(status, 2), -int(state.get("fail_count", 0)))
+
+        due_cards = [x for x in all_scripts_for_kiki if _review_due(x)]
+        candidate_cards = due_cards or all_scripts_for_kiki
+        weak_cards = [x for x in candidate_cards if review_states.get(x.get("_review_id"), {}).get("status") in ("weak", "learning")]
+        new_cards = [x for x in candidate_cards if review_states.get(x.get("_review_id"), {}).get("status", "new") == "new"]
+        other_cards = [x for x in candidate_cards if x not in weak_cards and x not in new_cards]
+        # 5回中4回は弱点・学習中、1回は新規を優先する。
+        review_turn = int(st.session_state.get("script_review_turn", 0))
+        if new_cards and (review_turn % 5 == 4 or not weak_cards):
+            preferred = new_cards
+        else:
+            preferred = weak_cards or other_cards or new_cards or candidate_cards
+        preferred = sorted(preferred, key=_review_priority)
+        current_id = st.session_state.get("script_review_current_id")
+        current_card = next((x for x in all_scripts_for_kiki if x.get("_review_id") == current_id), None)
+        if current_card is None or st.session_state.get("script_review_advance", False):
+            current_card = preferred[0]
+            st.session_state.script_review_current_id = current_card.get("_review_id")
+            st.session_state.script_review_revealed = False
+            st.session_state.script_review_advance = False
+
+        state = review_states.get(current_card.get("_review_id"), {})
+        status_labels = {"weak": "要復習", "learning": "学習中", "known": "定着", "new": "未評価"}
+        st.markdown(f"**カード {all_scripts_for_kiki.index(current_card)+1}/{len(all_scripts_for_kiki)}**　`{status_labels.get(state.get('status', 'new'), '未評価')}`　復習 {state.get('review_count', 0)} 回")
+        st.markdown("<div style='background:#0f172a;border:1px solid #334155;border-radius:14px;padding:22px 18px;margin:8px 0;'>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:12px;color:#94a3b8;margin-bottom:8px;'>日本語から英文を思い出す</div><div style='font-size:23px;font-weight:800;color:#f8fafc;line-height:1.6;'>{current_card.get('english_jp') or '日本語訳が登録されていません'}</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        hint_key = "script_review_hint_" + str(current_card.get("_review_id"))
+        if st.button("💡 ヒント（チャンク・文法）", key="script_review_hint_btn"):
+            st.session_state[hint_key] = True
+        if st.session_state.get(hint_key, False):
+            chunk = current_card.get("chunked") or current_card.get("english") or ""
+            grammar = current_card.get("grammar") or "文法解説は保存されていません。"
+            st.markdown(f"**フレーズの区切り**\n\n{chunk}")
+            st.markdown(f"**文法・使い方**\n\n{grammar}")
+
+        if not st.session_state.get("script_review_revealed", False):
+            if st.button("⏱ 5秒考えて、英文を表示", type="primary", key="script_review_reveal_btn"):
+                countdown = st.empty()
+                progress = st.progress(0)
+                for second in range(5, 0, -1):
+                    countdown.info(f"声に出して答えてください… あと {second} 秒")
+                    progress.progress((6-second)/5)
+                    time.sleep(1)
+                countdown.empty()
+                progress.empty()
+                st.session_state.script_review_revealed = True
+                st.rerun()
+        else:
+            st.markdown(f"<div style='background:#29280b;border-left:5px solid #FFE600;border-radius:10px;padding:18px;margin:12px 0;color:#FFE600;font-size:24px;font-weight:900;'>{current_card.get('english', '')}</div>", unsafe_allow_html=True)
+            if current_card.get("chunked") and current_card.get("chunked") != current_card.get("english"):
+                st.markdown(f"**チャンク分解**\n\n{current_card.get('chunked')}")
+            if current_card.get("grammar"):
+                with st.expander("📘 文法・フレーズ解説"):
+                    st.write(current_card.get("grammar"))
+            audio_text = current_card.get("english", "")
+            audio_lang = current_card.get("lang", "en")
+            if audio_text:
+                try:
+                    tts_code = "de" if audio_lang == "de" else ("zh-cn" if audio_lang == "zh" else "en")
+                    audio_fp = io.BytesIO()
+                    gTTS(text=audio_text, lang=tts_code, slow=False).write_to_fp(audio_fp)
+                    st.audio(audio_fp.getvalue(), format="audio/mp3")
+                except Exception as audio_err:
+                    st.caption(f"音声を生成できませんでした: {audio_err}")
+            st.markdown("**思い出せた度合いを選択してください**")
+            rate1, rate2, rate3 = st.columns(3)
+            with rate1:
+                if st.button("🔁 できなかった", key="script_review_again", use_container_width=True):
+                    save_script_review(current_card, "again")
+                    st.session_state.script_review_turn = review_turn + 1
+                    st.session_state.script_review_advance = True
+                    st.session_state.pop(hint_key, None)
+                    st.rerun()
+            with rate2:
+                if st.button("💡 ヒントが必要", key="script_review_hint_rate", use_container_width=True):
+                    save_script_review(current_card, "hint")
+                    st.session_state.script_review_turn = review_turn + 1
+                    st.session_state.script_review_advance = True
+                    st.session_state.pop(hint_key, None)
+                    st.rerun()
+            with rate3:
+                if st.button("✅ 自力で言えた", key="script_review_easy", use_container_width=True):
+                    save_script_review(current_card, "easy")
+                    st.session_state.script_review_turn = review_turn + 1
+                    st.session_state.script_review_advance = True
+                    st.session_state.pop(hint_key, None)
+                    st.rerun()
+
+    st.markdown("---")
+    if not all_scripts_for_kiki:
         st.markdown(ph("📚 保存帳"), unsafe_allow_html=True)
     else:
         st.markdown("### 📚 保存したスクリプト")
-        
-        # クラウド保存分
         if db_scripts:
             st.success(f"☁️ クラウド上に {len(db_scripts)} 件のスクリプトが保存されています")
             for item in db_scripts:
-                with st.expander(f"📄 {item.get('_title', '無題')} ({item.get('_created_at', '')[:10]})"):
+                created = str(item.get("_created_at", ""))[:10]
+                with st.expander(f"📄 {item.get('_title', '無題')} ({created})"):
                     st.markdown(f"**{item.get('_lang', '言語').upper()}:** {item.get('english', '')}")
                     st.markdown(f"**日本語:** {item.get('english_jp', '')}")
+                    if item.get("grammar"):
+                        st.markdown(f"**文法:** {item.get('grammar')}")
                     if st.button("🗑️ 削除", key=f"del_{item.get('_db_id')}"):
-                        delete_script_from_db(item.get('_db_id'))
+                        if delete_script_from_db(item.get("_db_id")):
+                            st.success("削除しました")
                         st.rerun()
-                        
-        # 一時保存分（DB未接続時などのフォールバック）
-        if st.session_state.saved_list:
-            st.info("💻 このセッションでの一時保存")
-            if st.button("🗑️ 一時保存を全て削除"):
+        if local_scripts:
+            st.info("💻 このセッションでの一時保存（ページ再起動後は保持されません）")
+            if st.button("🗑️ 一時保存を全て削除", key="clear_local_saved_scripts"):
                 st.session_state.saved_list = []
+                st.session_state.script_review_current_id = None
                 st.rerun()
-                
-            for idx, item in enumerate(st.session_state.saved_list):
-                st.markdown(f"""
-                <div class="ep-card">
-                    <strong>{item.get('title', '無題')}</strong><br>
-                    <span style="font-size:12px; color:#cbd5e1;">{item.get('english_jp', '')}</span>
-                </div>
-                """, unsafe_allow_html=True)
+            for idx, item in enumerate(local_scripts):
+                with st.expander(f"📄 {item.get('_title', '無題')}"):
+                    st.markdown(f"**{item.get('english_jp', '')}**")
+                    st.write(item.get("english", ""))
+
